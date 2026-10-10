@@ -1,0 +1,102 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-monytix}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-monytix}
+      POSTGRES_DB: ${POSTGRES_DB:-monytix}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-monytix} -d ${POSTGRES_DB:-monytix}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrator:
+    image: postgres:17
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER:-monytix}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-monytix}
+      PGDATABASE: ${POSTGRES_DB:-monytix}
+      API_DB_PASSWORD: ${API_DB_PASSWORD:-monytix_api_local}
+      INTELLIGENCE_DB_PASSWORD: ${INTELLIGENCE_DB_PASSWORD:-monytix_intelligence_local}
+    volumes:
+      - ./database:/database:ro
+      - ./scripts/migrate.sh:/migrate.sh:ro
+    entrypoint: ["bash", "/migrate.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/api.Dockerfile
+    environment:
+      PORT: 3000
+      DATABASE_URL: ${DATABASE_URL:-postgres://monytix_api:monytix_api_local@postgres:5432/monytix}
+      INTELLIGENCE_URL: ${INTELLIGENCE_URL:-http://intelligence:8000}
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT:-}
+      OBJECT_STORAGE_REGION: ${OBJECT_STORAGE_REGION:-auto}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:-}
+      OBJECT_STORAGE_ACCESS_KEY_ID: ${OBJECT_STORAGE_ACCESS_KEY_ID:-}
+      OBJECT_STORAGE_SECRET_ACCESS_KEY: ${OBJECT_STORAGE_SECRET_ACCESS_KEY:-}
+      UPLOAD_MAX_BYTES: ${UPLOAD_MAX_BYTES:-10485760}
+      UPLOAD_GRANT_TTL_SECONDS: ${UPLOAD_GRANT_TTL_SECONDS:-900}
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: 3310
+    ports:
+      - "${API_PORT:-3000}:3000"
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+
+  clamav:
+    image: clamav/clamav:1.4
+    environment:
+      CLAMAV_NO_FRESHCLAMD: "false"
+
+  scanner:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/api.Dockerfile
+    command: ["node", "dist/imports/scan-worker.js"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgres://monytix_api:monytix_api_local@postgres:5432/monytix}
+      OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT:-}
+      OBJECT_STORAGE_REGION: ${OBJECT_STORAGE_REGION:-auto}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:-}
+      OBJECT_STORAGE_ACCESS_KEY_ID: ${OBJECT_STORAGE_ACCESS_KEY_ID:-}
+      OBJECT_STORAGE_SECRET_ACCESS_KEY: ${OBJECT_STORAGE_SECRET_ACCESS_KEY:-}
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: 3310
+      STATEMENT_RETENTION_DAYS: ${STATEMENT_RETENTION_DAYS:-90}
+      UNCOMPLETED_UPLOAD_RETENTION_HOURS: ${UNCOMPLETED_UPLOAD_RETENTION_HOURS:-24}
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+      clamav:
+        condition: service_started
+    restart: unless-stopped
+
+  intelligence:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/intelligence.Dockerfile
+    environment:
+      PORT: 8000
+      DATABASE_URL: ${INTELLIGENCE_DATABASE_URL:-postgres://monytix_intelligence:monytix_intelligence_local@postgres:5432/monytix}
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+
+volumes:
+  postgres_data:

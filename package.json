@@ -1,0 +1,7 @@
+{
+  "name": "monytix",
+  "private": true,
+  "workspaces": [
+    "services/api"
+  ]
+}

@@ -1,0 +1,171 @@
+openapi: 3.1.0
+info:
+  title: Monytix API
+  version: 0.1.0
+  summary: Public HTTP contract for the Monytix mobile apps.
+servers:
+  - url: http://localhost:3000
+paths:
+  /auth:
+    get:
+      operationId: getAuth
+      summary: Authentication stub.
+      responses:
+        "200":
+          description: Auth module stub.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModuleStub"
+  /users:
+    get:
+      operationId: getUsers
+      summary: User profiles stub.
+      responses:
+        "200":
+          description: Users module stub.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModuleStub"
+  /accounts:
+    get:
+      operationId: getAccounts
+      summary: Financial accounts stub.
+      responses:
+        "200":
+          description: Accounts module stub.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModuleStub"
+  /transactions:
+    get:
+      operationId: getTransactions
+      summary: Ledger transactions stub.
+      responses:
+        "200":
+          description: Transactions module stub.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModuleStub"
+  /sources:
+    get:
+      operationId: getSources
+      summary: Ingestion sources stub.
+      responses:
+        "200":
+          description: Sources module stub.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModuleStub"
+  /statements:
+    get:
+      operationId: getStatements
+      summary: Statement documents stub.
+      responses:
+        "200":
+          description: Statements module stub.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModuleStub"
+  /personal:
+    get:
+      operationId: getPersonal
+      summary: Personal finance views stub.
+      responses:
+        "200":
+          description: Personal module stub.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModuleStub"
+  /business:
+    get:
+      operationId: getBusiness
+      summary: Business finance views stub.
+      responses:
+        "200":
+          description: Business module stub.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModuleStub"
+  /decisions:
+    get:
+      operationId: getDecisions
+      summary: Decision records stub.
+      responses:
+        "200":
+          description: Decisions module stub.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModuleStub"
+  /missions:
+    get:
+      operationId: getMissions
+      summary: Mission plans stub.
+      responses:
+        "200":
+          description: Missions module stub.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModuleStub"
+  /nudges:
+    get:
+      operationId: getNudges
+      summary: Nudge delivery stub.
+      responses:
+        "200":
+          description: Nudges module stub.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModuleStub"
+  /projections:
+    get:
+      operationId: getProjections
+      summary: Cash projections stub.
+      responses:
+        "200":
+          description: Projections module stub.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModuleStub"
+  /platform/health:
+    get:
+      operationId: getPlatformHealth
+      summary: API process health.
+      responses:
+        "200":
+          description: Platform health.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+components:
+  schemas:
+    ModuleStub:
+      type: object
+      additionalProperties: false
+      required: [module, status]
+      properties:
+        module:
+          type: string
+        status:
+          const: stub
+    Health:
+      type: object
+      additionalProperties: false
+      required: [module, status]
+      properties:
+        module:
+          const: platform
+        status:
+          const: ok

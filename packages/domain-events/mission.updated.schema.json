@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://monytix.dev/events/mission.updated.schema.json",
+  "title": "mission.updated",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "type",
+    "occurredAt",
+    "payload"
+  ],
+  "properties": {
+    "type": {
+      "const": "mission.updated"
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "missionId"
+      ],
+      "properties": {
+        "missionId": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

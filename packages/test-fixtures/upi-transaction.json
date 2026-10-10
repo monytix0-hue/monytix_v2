@@ -1,0 +1,7 @@
+{
+  "id": "txn_sample_upi",
+  "amount": "250.00",
+  "currency": "INR",
+  "vpa": "shop@upi",
+  "narration": "UPI/shop@upi/sample"
+}

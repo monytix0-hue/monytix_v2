@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://monytix.dev/events/transaction.ingested.schema.json",
+  "title": "transaction.ingested",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "type",
+    "occurredAt",
+    "payload"
+  ],
+  "properties": {
+    "type": {
+      "const": "transaction.ingested"
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "transactionId"
+      ],
+      "properties": {
+        "transactionId": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

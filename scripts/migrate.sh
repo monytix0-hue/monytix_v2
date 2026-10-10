@@ -11,9 +11,61 @@ until pg_isready -h "$PGHOST" -U "$PGUSER" -d "$PGDATABASE"; do
   sleep 1
 done
 
+psql_value() {
+  psql -tA -v ON_ERROR_STOP=1 -c "$1" | tr -d '[:space:]'
+}
+
+psql -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS public.deployed_sql (
+  filename text PRIMARY KEY,
+  applied_at timestamptz NOT NULL DEFAULT now()
+);"
+
+mark_applied() {
+  psql -v ON_ERROR_STOP=1 -c "INSERT INTO public.deployed_sql (filename) VALUES ('$1') ON CONFLICT (filename) DO NOTHING;"
+}
+
+migration_registered() {
+  local code="$1"
+  if [ "$(psql_value "SELECT to_regclass('ops.schema_migration') IS NOT NULL")" != "t" ]; then
+    return 1
+  fi
+  [ "$(psql_value "SELECT EXISTS (SELECT 1 FROM ops.schema_migration WHERE migration_code = '${code}')")" = "t" ]
+}
+
+if [ "$(psql_value "SELECT to_regclass('public.users') IS NOT NULL")" = "t" ]; then
+  mark_applied "0001_init.sql"
+fi
+
 for file in $(find /database/migrations -maxdepth 1 -type f -name '*.sql' | sort); do
+  name="$(basename "$file")"
+  case "$name" in
+    0002_d10_1_foundation.sql) code="D10-1" ;;
+    0003_m1_ops_roles.sql) code="M1-OPS" ;;
+    0004_d10_2_source_intake_canonical_ledger.sql) code="D10-2" ;;
+    0005_m2_1_read_grants.sql) code="M2-1-GRANTS" ;;
+    0006_m2_2_manual_transaction.sql) code="M2-2-MANUAL" ;;
+    0007_m2_3_statement_upload.sql) code="M2-3-UPLOAD" ;;
+    0008_m2_4_parser_v4_adapter.sql) code="M2-4-PARSER-V4" ;;
+    0009_m2_5_statement_mapping.sql) code="M2-5-STATEMENT-MAPPING" ;;
+    0010_m2_6_import_review.sql) code="M2-6-IMPORT-REVIEW" ;;
+    0011_m2_7_parser_version.sql) code="M2-7-PARSER-VERSION" ;;
+    *) code="" ;;
+  esac
+
+  if [ -n "$code" ] && migration_registered "$code"; then
+    echo "Skipping ${name}; ${code} is already registered"
+    mark_applied "$name"
+    continue
+  fi
+
+  if [ "$(psql_value "SELECT EXISTS (SELECT 1 FROM public.deployed_sql WHERE filename = '${name}')")" = "t" ]; then
+    echo "Skipping ${name}"
+    continue
+  fi
+
   echo "Applying ${file}"
   psql -v ON_ERROR_STOP=1 -f "$file"
+  mark_applied "$name"
 done
 
 psql -v ON_ERROR_STOP=1 \

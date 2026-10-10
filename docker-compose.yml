@@ -37,7 +37,7 @@ services:
       context: .
       dockerfile: infrastructure/docker/api.Dockerfile
     environment:
-      PORT: 3000
+      PORT: 8080
       DATABASE_URL: ${DATABASE_URL:-postgres://monytix_api:monytix_api_local@postgres:5432/monytix}
       INTELLIGENCE_URL: ${INTELLIGENCE_URL:-http://intelligence:8000}
       FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
@@ -52,7 +52,7 @@ services:
       CLAMAV_HOST: clamav
       CLAMAV_PORT: 3310
     expose:
-      - "3000"
+      - "8080"
     depends_on:
       migrator:
         condition: service_completed_successfully

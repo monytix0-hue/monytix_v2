@@ -5,8 +5,6 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-monytix}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-monytix}
       POSTGRES_DB: ${POSTGRES_DB:-monytix}
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -53,8 +51,8 @@ services:
       UPLOAD_GRANT_TTL_SECONDS: ${UPLOAD_GRANT_TTL_SECONDS:-900}
       CLAMAV_HOST: clamav
       CLAMAV_PORT: 3310
-    ports:
-      - "${API_PORT:-3000}:3000"
+    expose:
+      - "3000"
     depends_on:
       migrator:
         condition: service_completed_successfully

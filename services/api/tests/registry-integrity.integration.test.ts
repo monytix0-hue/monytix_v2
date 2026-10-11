@@ -170,8 +170,8 @@ test("M3.12 checks registry foundation integrity without resolving identity", as
     );
     assert.deepEqual(
       overlapped.rows.map((row) => row.ambiguity_status),
-      ["UNIQUE", "UNIQUE"],
-      "G3-GAP",
+      ["AMBIGUOUS", "AMBIGUOUS"],
+      "G3",
     );
 
     const live = await entity();

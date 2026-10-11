@@ -1,0 +1,22 @@
+# M3.5 contract decision register
+
+Status of every row: **APPROVED** on 2026-10-11 by the personal-contract approver. Record: `docs/approvals/IDENTITY_AMENDMENT_V0_1_DECISION_FORM.md`. The approval adopts the architecture and the documented gaps. It does not authorize implementation. Date of the original proposal: 2026-10-11.
+
+| ID | Conflict | Proposed resolution | Rationale | Alternative | Compatibility | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| ID-00 | F10C meaning versus D10-3 enums | F10C governs meaning. D10 v1.2 governs placement. D10-3 is unadopted where it contradicts either | The pack says it implements the freezes. It does not amend them | Adopt D10-3 and treat F10C enums as documentation | No runtime change | APPROVED |
+| ID-A | Entity nature | F10C six natures. `MERCHANT` is not a nature | AC-10 separates nature from hints | Adopt the D10-3 nature check | Future entity rows cannot use the pack's check | APPROVED |
+| ID-B | Commercial hints | Hints stay on the attempt: merchant, biller, employer candidate, RTA, gateway, marketplace, service provider, unknown | F10C section 5. Scale hint stays optional and non-core | Store hints as entity nature | M3.3 hint column stays null | APPROVED |
+| ID-C | Identifier object | Observed token, then governed `entity_identifier`. Not an alias | F10C section 12 and the D10 catalogue. AC-16 scoped uniqueness | Fold tokens into aliases as D10-3 does | M3.3 observations remain the observed layer | APPROVED |
+| ID-D | Alias types | F10C name types only. No default confidence | AC-23 and AC-36. A VPA label is not a VPA | Adopt D10-3 alias types and default confidence `1` | No alias rows exist to migrate | APPROVED |
+| ID-E | Relationships | Owner link uses F10C's five values. Entity graph uses F10C's brand and operator list. Employer stays a hint | Section 8 versus section 12. AC-07 does not clone accounts | Adopt D10-3's `RELATED` / `EMPLOYER` list | No relationship rows exist | APPROVED |
+| ID-F | Registry policy | Keep `ref.entity_registry_rule` as the version a resolution cites | D10 names it. AC-33 and AC-40 | Treat omission from D10-3 as deletion of the object | M3.3 policy table is a field allowlist, not this rule registry | APPROVED |
+| ID-G | Effective dates | Status plus effective period on alias, governed identifier, and both relationship kinds | AC-26 and AC-29 | Status-only aliases, as in D10-3 | Historical M3.3 attempts have no entity period to rewrite | APPROVED |
+| ID-H | Confidence scale | No number is defined. Do not invent one. Missing is not zero | F10C section 14, AC-32, F10F | Adopt D10-3 defaults `0` and `1` | M3.3 scores stay null | APPROVED |
+| ID-I | Auto-resolve cutoff | Numeric paths stay blocked. Exact counterparty-account ownership is the only boolean path described, and it is not authorized to build | Section 7 exact match versus AC-04's unpublished threshold | Block even the exact account match until a number exists | Current outcomes stay `UNKNOWN` or `AMBIGUOUS` | APPROVED |
+| ID-J | Calibration | No labelled set is in the freeze. Classifier weights are not the set | AC-34 and AC-35 | Copy parser `parse_confidence` | No score column is filled | APPROVED |
+| ID-K | Owner VPA | Owner-scoped verification evidence against a governed VPA. Not created by narration or by a parser field | Section 8, AC-05, AC-39 | Infer `SELF` from handle shape or the words "self" or "own" | No owner-VPA table is added | APPROVED |
+| ID-L | Collisions | Two active in-scope attachments for one scoped token or alias stay `AMBIGUOUS` | Section 17, AC-23 | Allow the D10-3 unique key that includes `entity_id` and keep both active without ambiguity | M3.3 already keeps two VPAs ambiguous | APPROVED |
+| ID-M | Revocation | Close the period. Ignore the row in future attempts. Keep past attempts | Section 18 and section 19 | Delete the alias or identifier | No rows to revoke | APPROVED |
+| ID-N | Erasure | `MISSING_SOURCE` for the named governance specification. No hard delete. Tombstones follow F10A, F10L L35, and D10 only | F10C section 20 cites a document that is not in the bundles | Invent a retention period | Ledger and M3.3 evidence stay | APPROVED |
+| ID-O | Migration 0015 | Do not alter it. Do not reuse its table names for the D10-3 shapes. Future `RESOLVED` rows need a structure id. Existing attempts stay | AC-01 versus rows that have no structure. AC-30 history | Reload D10-3 with `CREATE TABLE IF NOT EXISTS` | Current F10C outcomes unchanged | APPROVED |

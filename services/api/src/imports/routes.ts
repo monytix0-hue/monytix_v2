@@ -82,7 +82,8 @@ export const importRoutes: FastifyPluginAsync<ImportRouteOptions> = async (app, 
         body: responseBody,
       });
       return reply.status(201).send(stored.body ?? responseBody);
-    } catch {
+    } catch (error) {
+      logImportFailure(request, error);
       return reply.status(503).send({ error: "unavailable" });
     }
   });
@@ -105,7 +106,8 @@ export const importRoutes: FastifyPluginAsync<ImportRouteOptions> = async (app, 
         return reply.status(403).send({ error: "owner_forbidden" });
       }
       return reply.status(200).send(result.body);
-    } catch {
+    } catch (error) {
+      logImportFailure(request, error);
       return reply.status(503).send({ error: "unavailable" });
     }
   });
@@ -145,7 +147,8 @@ export const importRoutes: FastifyPluginAsync<ImportRouteOptions> = async (app, 
         idempotencyKey: key,
       });
       return sendReviewResult(reply, result);
-    } catch {
+    } catch (error) {
+      logImportFailure(request, error);
       return reply.status(503).send({ error: "unavailable" });
     }
   });
@@ -178,7 +181,8 @@ export const importRoutes: FastifyPluginAsync<ImportRouteOptions> = async (app, 
         return reply.status(result.outcome === "conflict" ? 409 : 422).send({ error: result.outcome === "conflict" ? "idempotency_conflict" : "invalid_request" });
       }
       return reply.status(200).send({ data: result.body });
-    } catch {
+    } catch (error) {
+      logImportFailure(request, error);
       return reply.status(503).send({ error: "unavailable" });
     }
   });
@@ -258,14 +262,16 @@ async function completeImport(
     }
     await storage.deleteObject(stagingKey);
     return reply.status(201).send(completed.body);
-  } catch {
+  } catch (error) {
+    logImportFailure(request, error);
     try {
       const latest = await imports.status({ actorId: request.actorId, ownerId: request.ownerId, importId });
       const latestData = (latest.body as { data?: Record<string, unknown> } | undefined)?.data;
       if (latest.outcome !== "forbidden" && latestData?.sealed === true) {
         return replayCompletion(reply, imports, request, importId, latestData, finalKey);
       }
-    } catch {
+    } catch (error) {
+      logImportFailure(request, error);
       return reply.status(503).send({ error: "unavailable" });
     }
     return reply.status(503).send({ error: "unavailable" });
@@ -298,7 +304,8 @@ async function sendReview(
       return reply.status(404).send({ error: "not_found" });
     }
     return reply.status(200).send({ data: { items: result.items ?? [] } });
-  } catch {
+  } catch (error) {
+    logImportFailure(request, error);
     return reply.status(503).send({ error: "unavailable" });
   }
 }
@@ -428,6 +435,11 @@ function readOptionalUuid(value: unknown): string | null | undefined {
     return undefined;
   }
   return value;
+}
+
+function logImportFailure(request: FastifyRequest, error: unknown): void {
+  const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code.slice(0, 32) : "unknown";
+  request.log.error({ event: "import_failed", code });
 }
 
 function headerValue(value: string | string[] | undefined): string | null {

@@ -54,6 +54,7 @@ export async function signToken(input: {
           }
           return requestedOwnerId;
         },
+        async ping() {},
         async close() {},
       },
     },

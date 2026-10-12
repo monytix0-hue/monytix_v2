@@ -1,14 +1,15 @@
-import pg from "pg";
+import { openPool } from "../db/pool.js";
 import { AuthError } from "./errors.js";
 
 export type IdentityStore = {
   provisionActor(input: { subject: string; email: string | null }): Promise<{ actorId: string }>;
   resolveOwner(actorId: string, requestedOwnerId: string | null): Promise<string | null>;
+  ping(): Promise<void>;
   close(): Promise<void>;
 };
 
 export function createPgIdentity(databaseUrl: string): IdentityStore {
-  const pool = new pg.Pool({ connectionString: databaseUrl, max: 4 });
+  const pool = openPool(databaseUrl);
 
   return {
     async provisionActor(input) {
@@ -40,6 +41,10 @@ export function createPgIdentity(databaseUrl: string): IdentityStore {
         [actorId],
       );
       return result.rows[0]?.default_owner_for_actor ?? null;
+    },
+
+    async ping() {
+      await pool.query("SELECT 1");
     },
 
     async close() {

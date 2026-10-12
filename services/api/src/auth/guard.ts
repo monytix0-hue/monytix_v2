@@ -56,7 +56,8 @@ export function registerAuthGuard(
 }
 
 function isPublic(url: string): boolean {
-  return url.split("?")[0] === "/platform/health";
+  const path = url.split("?")[0];
+  return path === "/platform/health" || path === "/platform/ready";
 }
 
 function bearerToken(header: string | undefined): string | null {

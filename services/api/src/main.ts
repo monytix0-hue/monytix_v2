@@ -4,6 +4,7 @@ import { createFirebaseVerifier, revokedSubjectsFromEnv } from "./auth/verifier.
 import { createLedgerRead } from "./ledger/read.js";
 import { createManualTransactionStore } from "./transactions/manual.js";
 import { createImportStore } from "./imports/store.js";
+import { pingScanner } from "./imports/scan.js";
 import { createObjectStorage, storageConfigFromEnv } from "./imports/storage.js";
 
 const port = Number(process.env.PORT ?? 8080);
@@ -28,14 +29,24 @@ const auth = projectId
       },
     };
 
+const identity = databaseUrl.length > 0 ? createPgIdentity(databaseUrl) : null;
+const objectStorage = storageConfigFromEnv() ? createObjectStorage(storageConfigFromEnv()!) : null;
+const scannerHost = process.env.CLAMAV_HOST?.trim() || "clamav";
+const scannerPort = Number(process.env.CLAMAV_PORT ?? 3310);
+
 const app = await buildApp({
   logger: productionLogger(),
   auth,
-  identity: databaseUrl.length > 0 ? createPgIdentity(databaseUrl) : null,
+  identity,
   manualTransactions: databaseUrl.length > 0 ? createManualTransactionStore(databaseUrl) : null,
   ledger: databaseUrl.length > 0 ? createLedgerRead(databaseUrl) : null,
   imports: databaseUrl.length > 0 ? createImportStore(databaseUrl) : null,
-  objectStorage: storageConfigFromEnv() ? createObjectStorage(storageConfigFromEnv()!) : null,
+  objectStorage,
+  platformProbe: async () => ({
+    database: identity ? await identity.ping().then(() => "ok" as const).catch(() => "down" as const) : "unconfigured",
+    storage: objectStorage ? await objectStorage.probe().then(() => "ok" as const).catch(() => "down" as const) : "unconfigured",
+    scanner: await pingScanner(scannerHost, scannerPort).then(() => "ok" as const).catch(() => "down" as const),
+  }),
 });
 
 try {

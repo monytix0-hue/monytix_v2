@@ -3,6 +3,7 @@ import {
   CopyObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadBucketCommand,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -36,6 +37,7 @@ export type ObjectStorage = {
   readObject(key: string): Promise<StoredObject | null>;
   copyObject(sourceKey: string, targetKey: string): Promise<string>;
   deleteObject(key: string): Promise<void>;
+  probe(): Promise<void>;
   close(): Promise<void>;
 };
 
@@ -118,6 +120,10 @@ export function createObjectStorage(config: StorageConfig): ObjectStorage {
           throw error;
         }
       }
+    },
+
+    async probe() {
+      await client.send(new HeadBucketCommand({ Bucket: config.bucket }));
     },
 
     async close() {

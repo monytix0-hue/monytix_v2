@@ -1,4 +1,4 @@
-import pg from "pg";
+import { openPool } from "../db/pool.js";
 import { interpretFinancialEvent, publishTransactionStructure, resolveFinancialUse, resolveTransactionParty } from "./interpret.js";
 import type { ObjectStorage } from "./storage.js";
 
@@ -59,7 +59,7 @@ export type ImportResult = {
 };
 
 export function createImportStore(databaseUrl: string): ImportStore {
-  const pool = new pg.Pool({ connectionString: databaseUrl, max: 4 });
+  const pool = openPool(databaseUrl);
   return {
     async authorize(input) {
       const result = await pool.query<{ result: ImportResult }>(

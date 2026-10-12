@@ -15,13 +15,19 @@ if (!databaseUrl || !storageConfig) {
 
 const storage = createObjectStorage(storageConfig);
 
+function logWorkerFailure(error: unknown): void {
+  const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code.slice(0, 32) : "unknown";
+  const name = error instanceof Error ? error.name : "Error";
+  console.error(JSON.stringify({ level: "error", module: "statement-worker", event: "tick_failed", name, code }));
+}
+
 async function tick(): Promise<void> {
   await runScanOnce(databaseUrl, storage, host, port);
   await runExtractOnce(databaseUrl, storage);
   await sweepRetention(databaseUrl, storage, abandonedHours, retentionDays);
 }
 
-await tick();
+await tick().catch(logWorkerFailure);
 setInterval(() => {
-  void tick();
+  void tick().catch(logWorkerFailure);
 }, 15_000);

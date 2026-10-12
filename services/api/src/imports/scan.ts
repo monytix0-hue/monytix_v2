@@ -2,6 +2,28 @@ import net from "node:net";
 import pg from "pg";
 import type { ObjectStorage } from "./storage.js";
 
+export async function pingScanner(host: string, port: number): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const socket = net.connect(port, host);
+    socket.setTimeout(1000, () => {
+      socket.destroy(new Error("clamav timed out"));
+    });
+    const chunks: Buffer[] = [];
+    socket.on("data", (chunk) => chunks.push(chunk));
+    socket.on("error", reject);
+    socket.on("end", () => {
+      const response = Buffer.concat(chunks).toString("utf8");
+      if (response.includes("PONG")) {
+        resolve();
+        return;
+      }
+      reject(new Error("clamav returned an unrecognized result"));
+    });
+    socket.write("zPING\0");
+    socket.end();
+  });
+}
+
 export async function scanBuffer(host: string, port: number, body: Buffer): Promise<"CLEAN" | "INFECTED"> {
   const response = await new Promise<string>((resolve, reject) => {
     const socket = net.connect(port, host);

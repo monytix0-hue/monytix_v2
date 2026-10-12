@@ -67,6 +67,7 @@ test("POST /v1/imports rejects an unsupported file before any write", async () =
         return "";
       },
       async deleteObject() {},
+      async probe() {},
       async close() {},
     },
   });

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from "fastify";
 import { accountsRoutes } from "./accounts/index.js";
 import { authRoutes } from "./auth/index.js";
@@ -8,7 +9,8 @@ import { decisionsRoutes } from "./decisions/index.js";
 import { missionsRoutes } from "./missions/index.js";
 import { nudgesRoutes } from "./nudges/index.js";
 import { personalRoutes } from "./personal/index.js";
-import { platformRoutes } from "./platform/index.js";
+import { platformRoutes, type PlatformProbe } from "./platform/index.js";
+import { createRateLimit } from "./http/rate-limit.js";
 import { projectionsRoutes } from "./projections/index.js";
 import { sourcesRoutes } from "./sources/index.js";
 import { statementsRoutes } from "./statements/index.js";
@@ -29,6 +31,8 @@ export type BuildOptions = {
   ledger?: LedgerRead | null;
   imports?: ImportStore | null;
   objectStorage?: ObjectStorage | null;
+  platformProbe?: PlatformProbe;
+  rateLimit?: { limit: number; windowMs: number };
 };
 
 const redactedPaths = [
@@ -57,8 +61,24 @@ export function productionLogger(): FastifyServerOptions["logger"] {
   };
 }
 
+const requestIdText = /^[A-Za-z0-9._:-]{8,80}$/;
+
 export async function buildApp(options: BuildOptions = {}): Promise<FastifyInstance> {
-  const app = Fastify({ logger: options.logger ?? false });
+  const app = Fastify({
+    logger: options.logger ?? false,
+    bodyLimit: 1_048_576,
+    genReqId(request) {
+      const header = request.headers["x-request-id"];
+      if (typeof header === "string" && requestIdText.test(header)) {
+        return header;
+      }
+      return randomUUID();
+    },
+  });
+  app.addHook("onSend", async (request, reply) => {
+    reply.header("x-request-id", request.id);
+  });
+  const limiter = createRateLimit(options.rateLimit?.limit ?? 300, options.rateLimit?.windowMs ?? 60_000);
   const auth = options.auth ?? { configured: false, verify: async () => {
     throw new Error("auth is not configured");
   } };
@@ -69,6 +89,15 @@ export async function buildApp(options: BuildOptions = {}): Promise<FastifyInsta
   const objectStorage = options.objectStorage ?? null;
 
   registerAuthGuard(app, auth, identity);
+  app.addHook("onRequest", async (request, reply) => {
+    const path = request.url.split("?")[0];
+    if (path === "/platform/health" || path === "/platform/ready" || !request.actorId) {
+      return;
+    }
+    if (!limiter.allow(request.actorId)) {
+      return reply.status(429).send({ error: "rate_limited" });
+    }
+  });
   if (identity) {
     app.addHook("onClose", async () => {
       await identity.close();
@@ -109,7 +138,7 @@ export async function buildApp(options: BuildOptions = {}): Promise<FastifyInsta
   await app.register(missionsRoutes);
   await app.register(nudgesRoutes);
   await app.register(projectionsRoutes);
-  await app.register(platformRoutes);
+  await app.register(platformRoutes, { probe: options.platformProbe });
 
   return app;
 }

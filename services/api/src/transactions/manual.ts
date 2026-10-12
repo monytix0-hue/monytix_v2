@@ -1,4 +1,4 @@
-import pg from "pg";
+import { openPool } from "../db/pool.js";
 import { interpretFinancialEvent, publishTransactionStructure, resolveFinancialUse, resolveTransactionParty } from "../imports/interpret.js";
 
 export type ManualCreateInput = {
@@ -35,7 +35,7 @@ function logicalTransactionId(body: unknown): string | null {
 }
 
 export function createManualTransactionStore(databaseUrl: string): ManualTransactionStore {
-  const pool = new pg.Pool({ connectionString: databaseUrl, max: 4 });
+  const pool = openPool(databaseUrl);
 
   return {
     async create(input) {

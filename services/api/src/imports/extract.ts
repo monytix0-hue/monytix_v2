@@ -104,8 +104,18 @@ export async function runExtractOnce(databaseUrl: string, storage: ObjectStorage
         "SELECT ops.save_statement_extraction($1::uuid, $2, $3::jsonb, NULL, NULL) AS result",
         [job.payload.source_document_id, actualHash, JSON.stringify(parsed)],
       );
-      if (saved.rows[0]?.result.outcome === "created" && saved.rows[0]?.result.status !== "FAILED" && saved.rows[0]?.result.extraction_run_id) {
-        await client.query("SELECT ops.map_statement_extraction($1::uuid)", [saved.rows[0].result.extraction_run_id]);
+      const extraction = saved.rows[0]?.result;
+      if (extraction?.outcome === "created" && extraction.status !== "FAILED" && extraction.extraction_run_id) {
+        await client.query("SELECT ops.map_statement_extraction($1::uuid)", [extraction.extraction_run_id]);
+        await client.query("SELECT ops.publish_structure_extraction_run($1::uuid)", [extraction.extraction_run_id]);
+        await client.query("SELECT ops.interpret_extraction_run($1::uuid)", [extraction.extraction_run_id]);
+        await client.query("SELECT ops.resolve_extraction_run($1::uuid)", [extraction.extraction_run_id]);
+        await client.query("SELECT ops.resolve_party_extraction_run($1::uuid)", [extraction.extraction_run_id]);
+      } else if (extraction?.outcome === "replay" && extraction.extraction_run_id) {
+        await client.query("SELECT ops.publish_structure_extraction_run($1::uuid)", [extraction.extraction_run_id]);
+        await client.query("SELECT ops.interpret_extraction_run($1::uuid)", [extraction.extraction_run_id]);
+        await client.query("SELECT ops.resolve_extraction_run($1::uuid)", [extraction.extraction_run_id]);
+        await client.query("SELECT ops.resolve_party_extraction_run($1::uuid)", [extraction.extraction_run_id]);
       }
       await client.query("SELECT ops.finish_statement_extraction($1::uuid, true, NULL)", [job.outbox_event_id]);
       return true;

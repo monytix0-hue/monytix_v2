@@ -57,6 +57,8 @@ for file in $(find /database/migrations -maxdepth 1 -type f -name '*.sql' | sort
     0017_m3_11_registry_foundation.sql) code="M3-11-REGISTRY-FOUNDATION" ;;
     0018_m3_15_temporal_collision_enforcement.sql) code="M3-15-TEMPORAL-COLLISION" ;;
     0019_m3_18_registry_write_integrity.sql) code="M3-18-WRITE-INTEGRITY" ;;
+    0020_scan_claim_lease.sql) code="M3-19-SCAN-LEASE" ;;
+    0021_canonical_current_date_index.sql) code="M3-20-CURRENT-DATE-INDEX" ;;
     *) code="" ;;
   esac
 

@@ -41,6 +41,7 @@ export const importRoutes: FastifyPluginAsync<ImportRouteOptions> = async (app, 
         sha256: body.sha256,
         filename: body.filename,
         sourceMetadata: body.sourceMetadata,
+        financialAccountId: body.financialAccountId,
       });
       if (authorized.outcome === "forbidden") {
         return reply.status(403).send({ error: "owner_forbidden" });
@@ -208,20 +209,15 @@ async function completeImport(
     }
     const data = (current.body as { data: Record<string, unknown> }).data;
     if (data.sealed === true) {
-      const replay = await imports.complete({
-        actorId: request.actorId,
-        ownerId: request.ownerId,
-        importId,
-        size: Number(data.declared_byte_size),
-        mime: mimeFor(String(data.file_type)),
-        sha256: String(data.declared_sha256),
-        etag: "",
-        finalKey,
-      });
-      return reply.status(201).send(replay.body);
+      return replayCompletion(reply, imports, request, importId, data, finalKey);
     }
     const object = await storage.readObject(stagingKey);
     if (!object) {
+      const latest = await imports.status({ actorId: request.actorId, ownerId: request.ownerId, importId });
+      const latestData = (latest.body as { data?: Record<string, unknown> } | undefined)?.data;
+      if (latest.outcome !== "forbidden" && latestData?.sealed === true) {
+        return replayCompletion(reply, imports, request, importId, latestData, finalKey);
+      }
       const reason = grantExpired(data.grant_expires_at) ? "UPLOAD_EXPIRED" : "OBJECT_MISSING";
       await imports.fail({ actorId: request.actorId, ownerId: request.ownerId, importId, reason });
       return reply.status(422).send({ error: "invalid_request" });
@@ -263,6 +259,15 @@ async function completeImport(
     await storage.deleteObject(stagingKey);
     return reply.status(201).send(completed.body);
   } catch {
+    try {
+      const latest = await imports.status({ actorId: request.actorId, ownerId: request.ownerId, importId });
+      const latestData = (latest.body as { data?: Record<string, unknown> } | undefined)?.data;
+      if (latest.outcome !== "forbidden" && latestData?.sealed === true) {
+        return replayCompletion(reply, imports, request, importId, latestData, finalKey);
+      }
+    } catch {
+      return reply.status(503).send({ error: "unavailable" });
+    }
     return reply.status(503).send({ error: "unavailable" });
   }
 }
@@ -298,9 +303,33 @@ async function sendReview(
   }
 }
 
+async function replayCompletion(
+  reply: FastifyReply,
+  imports: ImportStore,
+  request: FastifyRequest,
+  importId: string,
+  data: Record<string, unknown>,
+  finalKey: string,
+) {
+  const replay = await imports.complete({
+    actorId: request.actorId!,
+    ownerId: request.ownerId!,
+    importId,
+    size: Number(data.declared_byte_size),
+    mime: mimeFor(String(data.file_type)),
+    sha256: String(data.declared_sha256),
+    etag: "",
+    finalKey,
+  });
+  return reply.status(201).send(replay.body);
+}
+
 function sendReviewResult(reply: FastifyReply, result: { outcome: string; body?: Record<string, unknown> }) {
   if (result.outcome === "forbidden") {
     return reply.status(403).send({ error: "owner_forbidden" });
+  }
+  if (result.outcome === "account_bound") {
+    return reply.status(409).send({ error: "account_bound" });
   }
   if (result.outcome === "stale") {
     return reply.status(409).send({ error: "stale_review" });
@@ -358,6 +387,7 @@ function readInitiation(body: unknown): {
   sha256: string;
   filename: string;
   sourceMetadata: Record<string, unknown> | null;
+  financialAccountId: string | null;
 } | null {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return null;
@@ -376,13 +406,28 @@ function readInitiation(body: unknown): {
   if (record.source_metadata !== undefined && (typeof record.source_metadata !== "object" || record.source_metadata === null || Array.isArray(record.source_metadata))) {
     return null;
   }
+  const financialAccountId = readOptionalUuid(record.financial_account_id);
+  if (financialAccountId === undefined) {
+    return null;
+  }
   return {
     fileType,
     byteSize,
     sha256,
     filename,
     sourceMetadata: (record.source_metadata as Record<string, unknown> | undefined) ?? null,
+    financialAccountId,
   };
+}
+
+function readOptionalUuid(value: unknown): string | null | undefined {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) {
+    return undefined;
+  }
+  return value;
 }
 
 function headerValue(value: string | string[] | undefined): string | null {

@@ -111,7 +111,13 @@ export function createObjectStorage(config: StorageConfig): ObjectStorage {
     },
 
     async deleteObject(key) {
-      await client.send(new DeleteObjectCommand({ Bucket: config.bucket, Key: key }));
+      try {
+        await client.send(new DeleteObjectCommand({ Bucket: config.bucket, Key: key }));
+      } catch (error) {
+        if (!isMissing(error)) {
+          throw error;
+        }
+      }
     },
 
     async close() {

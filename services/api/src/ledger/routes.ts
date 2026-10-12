@@ -135,7 +135,12 @@ export const ledgerRoutes: FastifyPluginAsync<LedgerRouteOptions> = async (app, 
         contract: "molybot-read-v0.1",
         question,
         available: page.items.length > 0,
-        answer: page.items.length > 0 ? "Latest recorded transactions." : "No recorded transactions are available.",
+        complete: page.nextCursor === null,
+        answer: page.items.length === 0
+          ? "No recorded transactions are available."
+          : page.nextCursor
+            ? "Latest recorded transactions. More recorded transactions exist beyond this page."
+            : "Latest recorded transactions.",
         items: page.items,
       };
     }
@@ -151,13 +156,23 @@ export const ledgerRoutes: FastifyPluginAsync<LedgerRouteOptions> = async (app, 
         direction: null,
         eventFamily: family,
       });
-      const items = page.items;
+      if (page.nextCursor) {
+        return {
+          contract: "molybot-read-v0.1",
+          question,
+          available: false,
+          complete: false,
+          answer: `More than 50 recorded ${family} transactions exist, so a complete answer is not available.`,
+          items: [],
+        };
+      }
       return {
         contract: "molybot-read-v0.1",
         question,
-        available: items.length > 0,
-        answer: items.length > 0 ? `Recorded ${family} transactions.` : `No recorded ${family} transactions are available.`,
-        items,
+        available: page.items.length > 0,
+        complete: true,
+        answer: page.items.length > 0 ? `Recorded ${family} transactions.` : `No recorded ${family} transactions are available.`,
+        items: page.items,
       };
     }
     const direction = question === "How much money came in this month?" ? "IN" : "OUT";
@@ -167,6 +182,7 @@ export const ledgerRoutes: FastifyPluginAsync<LedgerRouteOptions> = async (app, 
         contract: "molybot-read-v0.1",
         question,
         available: false,
+        complete: true,
         period,
         answer: "No recorded transactions are available for this month.",
         currencies: [],
@@ -176,6 +192,7 @@ export const ledgerRoutes: FastifyPluginAsync<LedgerRouteOptions> = async (app, 
       contract: "molybot-read-v0.1",
       question,
       available: true,
+      complete: true,
       period,
       answer: direction === "IN" ? "Recorded inflow by currency for this month." : "Recorded outflow by currency for this month.",
       currencies: overview.currencies.map((row) => ({

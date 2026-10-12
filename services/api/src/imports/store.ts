@@ -1,4 +1,5 @@
 import pg from "pg";
+import { interpretFinancialEvent, publishTransactionStructure, resolveFinancialUse, resolveTransactionParty } from "./interpret.js";
 import type { ObjectStorage } from "./storage.js";
 
 export type ImportStore = {
@@ -22,6 +23,7 @@ export type AuthorizeInput = {
   sha256: string;
   filename: string;
   sourceMetadata: Record<string, unknown> | null;
+  financialAccountId: string | null;
 };
 
 export type CompleteInput = {
@@ -61,7 +63,7 @@ export function createImportStore(databaseUrl: string): ImportStore {
   return {
     async authorize(input) {
       const result = await pool.query<{ result: ImportResult }>(
-        `SELECT ops.authorize_statement_upload($1::uuid,$2::uuid,$3,$4,$5::bigint,$6,$7,$8::jsonb) AS result`,
+        `SELECT ops.authorize_statement_upload($1::uuid,$2::uuid,$3,$4,$5::bigint,$6,$7,$8::jsonb,$9::uuid) AS result`,
         [
           input.actorId,
           input.ownerId,
@@ -71,6 +73,7 @@ export function createImportStore(databaseUrl: string): ImportStore {
           input.sha256,
           input.filename,
           input.sourceMetadata === null ? null : JSON.stringify(input.sourceMetadata),
+          input.financialAccountId,
         ],
       );
       return required(result.rows[0]?.result);
@@ -141,7 +144,15 @@ export function createImportStore(databaseUrl: string): ImportStore {
           input.idempotencyKey,
         ],
       );
-      return required(result.rows[0]?.result);
+      const resolved = required(result.rows[0]?.result);
+      const logicalId = mappedLogicalId(resolved);
+      if (logicalId) {
+        await publishTransactionStructure(pool, input.actorId, input.ownerId, logicalId);
+        await interpretFinancialEvent(pool, input.actorId, input.ownerId, logicalId);
+        await resolveFinancialUse(pool, input.actorId, input.ownerId, logicalId);
+        await resolveTransactionParty(pool, input.actorId, input.ownerId, logicalId);
+      }
+      return resolved;
     },
     async finalize(input) {
       const result = await pool.query<{ result: ImportResult }>(
@@ -164,6 +175,14 @@ export type UploadVerifier = {
   storage: ObjectStorage;
   store: ImportStore;
 };
+
+function mappedLogicalId(result: ImportResult): string | null {
+  const body = result.body as { outcome?: unknown; logical_transaction_id?: unknown } | undefined;
+  if ((result.outcome !== "ok" && result.outcome !== "replay") || body?.outcome !== "MAPPED") {
+    return null;
+  }
+  return typeof body.logical_transaction_id === "string" ? body.logical_transaction_id : null;
+}
 
 function required(value: ImportResult | undefined): ImportResult {
   if (!value || typeof value.outcome !== "string") {

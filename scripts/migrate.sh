@@ -49,6 +49,14 @@ for file in $(find /database/migrations -maxdepth 1 -type f -name '*.sql' | sort
     0009_m2_5_statement_mapping.sql) code="M2-5-STATEMENT-MAPPING" ;;
     0010_m2_6_import_review.sql) code="M2-6-IMPORT-REVIEW" ;;
     0011_m2_7_parser_version.sql) code="M2-7-PARSER-VERSION" ;;
+    0012_m2_8_account_binding.sql) code="M2-8-ACCOUNT-BINDING" ;;
+    0013_m3_1_financial_event.sql) code="M3-1-FINANCIAL-EVENT" ;;
+    0014_m3_2_f10e_taxonomy.sql) code="M3-2-F10E-TAXONOMY" ;;
+    0015_m3_3_party_evidence.sql) code="M3-3-F10C-PARTY" ;;
+    0016_m3_6_f10b_structure.sql) code="M3-6-F10B-STRUCTURE" ;;
+    0017_m3_11_registry_foundation.sql) code="M3-11-REGISTRY-FOUNDATION" ;;
+    0018_m3_15_temporal_collision_enforcement.sql) code="M3-15-TEMPORAL-COLLISION" ;;
+    0019_m3_18_registry_write_integrity.sql) code="M3-18-WRITE-INTEGRITY" ;;
     *) code="" ;;
   esac
 

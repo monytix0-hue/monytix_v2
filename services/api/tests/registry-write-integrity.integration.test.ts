@@ -65,29 +65,26 @@ test("M3.16 audits registry write paths without changing enforcement", async (t)
        RETURNING entity_identifier_id`,
       [statusOwner, statusOther, statusToken, ruleId],
     );
-    const direct = await admin.query<{ ambiguity_status: string }>(
-      `UPDATE intel.entity_identifier
-          SET ambiguity_status = 'UNIQUE'
-        WHERE entity_identifier_id = $1
-        RETURNING ambiguity_status`,
-      [statusRows.rows[0]!.entity_identifier_id],
+    await assert.rejects(
+      admin.query(
+        `UPDATE intel.entity_identifier
+            SET ambiguity_status = 'UNIQUE'
+          WHERE entity_identifier_id = $1`,
+        [statusRows.rows[0]!.entity_identifier_id],
+      ),
+      (error: { code?: string }) => error.code === "23514",
+      "W01",
     );
-    assert.equal(direct.rows[0]!.ambiguity_status, "UNIQUE", "W01");
-    const stillOverlapping = await admin.query<{ rows: string }>(
-      `SELECT count(*)::text AS rows
-         FROM intel.entity_identifier a
-         JOIN intel.entity_identifier b
-           ON a.identifier_type = b.identifier_type
-          AND a.provider_scope = b.provider_scope
-          AND a.normalized_value = b.normalized_value
-          AND a.entity_id <> b.entity_id
-          AND a.effective_from < COALESCE(b.effective_to, 'infinity'::timestamptz)
-          AND b.effective_from < COALESCE(a.effective_to, 'infinity'::timestamptz)
-        WHERE a.entity_identifier_id = $1
-          AND a.ambiguity_status = 'UNIQUE'`,
-      [statusRows.rows[0]!.entity_identifier_id],
+    const afterStatus = await admin.query<{ ambiguity_status: string }>(
+      `SELECT ambiguity_status FROM intel.entity_identifier
+        WHERE normalized_value = $1 ORDER BY entity_identifier_id`,
+      [statusToken],
     );
-    assert.equal(stillOverlapping.rows[0]!.rows, "1", "W08");
+    assert.deepEqual(
+      afterStatus.rows.map((row) => row.ambiguity_status),
+      ["AMBIGUOUS", "AMBIGUOUS"],
+      "W08",
+    );
 
     const deadA = await entity();
     const deadB = await entity();
@@ -160,7 +157,7 @@ test("M3.16 audits registry write paths without changing enforcement", async (t)
         RETURNING ambiguity_status`,
       [scopeRows.rows[0]!.entity_identifier_id],
     );
-    assert.equal(scopeUpdated.rows[0]!.ambiguity_status, "UNIQUE", "W04");
+    assert.equal(scopeUpdated.rows[0]!.ambiguity_status, "AMBIGUOUS", "W04");
 
     const valueEntity = await entity();
     const valueOther = await entity();
@@ -181,7 +178,7 @@ test("M3.16 audits registry write paths without changing enforcement", async (t)
         RETURNING ambiguity_status`,
       [valueRows.rows[0]!.entity_identifier_id, valueToken],
     );
-    assert.equal(valueUpdated.rows[0]!.ambiguity_status, "UNIQUE", "W05");
+    assert.equal(valueUpdated.rows[0]!.ambiguity_status, "AMBIGUOUS", "W05");
 
     const same = await entity();
     const moved = await entity();

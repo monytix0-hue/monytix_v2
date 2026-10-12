@@ -14,8 +14,9 @@ function percentile(values: number[], rank: number): number {
 }
 
 async function timed(run: () => Promise<unknown>): Promise<{ p50: number; p95: number; p99: number }> {
+  const sampleCount = Number(process.env.PERF_SAMPLES ?? 20);
   const samples: number[] = [];
-  for (let sample = 0; sample < 20; sample += 1) {
+  for (let sample = 0; sample < sampleCount; sample += 1) {
     const started = performance.now();
     await run();
     samples.push(performance.now() - started);
@@ -266,6 +267,22 @@ async function main(): Promise<void> {
           ORDER BY cv.transaction_date DESC, cv.logical_transaction_id DESC
           LIMIT 20`,
       );
+      const overviewPlan = await api.query<{ "QUERY PLAN": string }>(
+        `EXPLAIN (ANALYZE, BUFFERS)
+         SELECT cv.currency_code, count(*)
+           FROM core.canonical_transaction_version cv
+           JOIN core.logical_transaction lt ON lt.logical_transaction_id = cv.logical_transaction_id
+           LEFT JOIN intel.financial_event_resolution e
+             ON e.logical_transaction_id = cv.logical_transaction_id
+            AND e.canonical_transaction_version_id = cv.canonical_transaction_version_id
+            AND e.is_current
+          WHERE cv.is_current AND lt.identity_status = 'ACTIVE'
+            AND cv.duplicate_outcome <> 'EQUIVALENT_SUPERSEDED'
+            AND cv.amount IS NOT NULL AND cv.currency_code IS NOT NULL
+            AND cv.transaction_date >= DATE '2024-01-01' AND cv.transaction_date <= DATE '2027-12-31'
+            AND cv.currency_code = 'INR'
+          GROUP BY cv.currency_code`,
+      );
       await api.query("COMMIT");
       await api.end();
       const inrSummary = summaries.find((account) => account.accountId === inr);
@@ -286,7 +303,10 @@ async function main(): Promise<void> {
         postgres: await postgresDuring,
         plan: plan.rows
           .map((row) => row["QUERY PLAN"])
-          .filter((line) => line.startsWith("Limit") || line.includes("Execution Time") || line.includes("Buffers:")),
+          .filter((line, index) => index < 3 || line.includes("Execution Time") || line.includes("Seq Scan")),
+        overviewPlan: overviewPlan.rows
+          .map((row) => row["QUERY PLAN"])
+          .filter((line, index) => index < 6 || line.includes("Execution Time") || line.includes("Seq Scan")),
       });
       console.log(JSON.stringify(results[results.length - 1]));
     }

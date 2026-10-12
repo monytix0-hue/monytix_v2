@@ -1,6 +1,6 @@
 import { buildApp, productionLogger } from "./app.js";
 import { createPgIdentity } from "./auth/identity.js";
-import { createFirebaseVerifier, revokedSubjectsFromEnv } from "./auth/verifier.js";
+import { createFirebaseVerifier, productionAuthKey, revokedSubjectsFromEnv } from "./auth/verifier.js";
 import { createLedgerRead } from "./ledger/read.js";
 import { createManualTransactionStore } from "./transactions/manual.js";
 import { createImportStore } from "./imports/store.js";
@@ -11,14 +11,12 @@ const port = Number(process.env.PORT ?? 8080);
 const host = "0.0.0.0";
 const projectId = process.env.FIREBASE_PROJECT_ID?.trim() ?? "";
 const databaseUrl = process.env.DATABASE_URL?.trim() ?? "";
-const publicKey = process.env.MONYTIX_AUTH_PUBLIC_KEY_PEM?.trim() ?? "";
-
 const auth = projectId
   ? {
       configured: true,
       verify: await createFirebaseVerifier({
         projectId,
-        publicKeyPem: publicKey.length > 0 ? publicKey : undefined,
+        publicKeyPem: productionAuthKey(),
         revokedSubjects: revokedSubjectsFromEnv(process.env.MONYTIX_REVOKED_SUBJECTS),
       }),
     }
@@ -42,7 +40,9 @@ const app = await buildApp({
   ledger: databaseUrl.length > 0 ? createLedgerRead(databaseUrl) : null,
   imports: databaseUrl.length > 0 ? createImportStore(databaseUrl) : null,
   objectStorage,
+  importScanner: () => pingScanner(scannerHost, scannerPort),
   platformProbe: async () => ({
+    auth: projectId ? "ok" as const : "unconfigured" as const,
     database: identity ? await identity.ping().then(() => "ok" as const).catch(() => "down" as const) : "unconfigured",
     storage: objectStorage ? await objectStorage.probe().then(() => "ok" as const).catch(() => "down" as const) : "unconfigured",
     scanner: await pingScanner(scannerHost, scannerPort).then(() => "ok" as const).catch(() => "down" as const),

@@ -2,27 +2,30 @@ services:
   postgres:
     image: postgres:17
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-monytix}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-monytix}
-      POSTGRES_DB: ${POSTGRES_DB:-monytix}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-monytix} -d ${POSTGRES_DB:-monytix}"]
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
+    mem_limit: 2g
+    cpus: 2
 
   migrator:
     image: postgres:17
     environment:
       PGHOST: postgres
       PGPORT: 5432
-      PGUSER: ${POSTGRES_USER:-monytix}
-      PGPASSWORD: ${POSTGRES_PASSWORD:-monytix}
-      PGDATABASE: ${POSTGRES_DB:-monytix}
-      API_DB_PASSWORD: ${API_DB_PASSWORD:-monytix_api_local}
-      INTELLIGENCE_DB_PASSWORD: ${INTELLIGENCE_DB_PASSWORD:-monytix_intelligence_local}
+      PGUSER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      PGDATABASE: ${POSTGRES_DB:?POSTGRES_DB is required}
+      API_DB_PASSWORD: ${API_DB_PASSWORD:?API_DB_PASSWORD is required}
+      INTELLIGENCE_DB_PASSWORD: ${INTELLIGENCE_DB_PASSWORD:?INTELLIGENCE_DB_PASSWORD is required}
     volumes:
       - ./database:/database:ro
       - ./scripts/migrate.sh:/migrate.sh:ro
@@ -31,22 +34,25 @@ services:
       postgres:
         condition: service_healthy
     restart: "no"
+    mem_limit: 512m
+    cpus: 0.5
 
   api:
     build:
       context: .
       dockerfile: infrastructure/docker/api.Dockerfile
     environment:
+      NODE_ENV: production
       PORT: 8080
-      DATABASE_URL: ${DATABASE_URL:-postgres://monytix_api:monytix_api_local@postgres:5432/monytix}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       INTELLIGENCE_URL: ${INTELLIGENCE_URL:-http://intelligence:8000}
-      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:?FIREBASE_PROJECT_ID is required}
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT:-}
+      OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT:?OBJECT_STORAGE_ENDPOINT is required}
       OBJECT_STORAGE_REGION: ${OBJECT_STORAGE_REGION:-auto}
-      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:-}
-      OBJECT_STORAGE_ACCESS_KEY_ID: ${OBJECT_STORAGE_ACCESS_KEY_ID:-}
-      OBJECT_STORAGE_SECRET_ACCESS_KEY: ${OBJECT_STORAGE_SECRET_ACCESS_KEY:-}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:?OBJECT_STORAGE_BUCKET is required}
+      OBJECT_STORAGE_ACCESS_KEY_ID: ${OBJECT_STORAGE_ACCESS_KEY_ID:?OBJECT_STORAGE_ACCESS_KEY_ID is required}
+      OBJECT_STORAGE_SECRET_ACCESS_KEY: ${OBJECT_STORAGE_SECRET_ACCESS_KEY:?OBJECT_STORAGE_SECRET_ACCESS_KEY is required}
       UPLOAD_MAX_BYTES: ${UPLOAD_MAX_BYTES:-10485760}
       UPLOAD_GRANT_TTL_SECONDS: ${UPLOAD_GRANT_TTL_SECONDS:-900}
       CLAMAV_HOST: clamav
@@ -56,11 +62,33 @@ services:
     depends_on:
       migrator:
         condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/platform/ready').then((response)=>process.exit(response.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    restart: unless-stopped
+    mem_limit: 1g
+    cpus: 1
 
   clamav:
     image: clamav/clamav:1.4
     environment:
       CLAMAV_NO_FRESHCLAMD: "false"
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 300s
+    restart: unless-stopped
+    mem_limit: 3g
+    cpus: 1
 
   scanner:
     build:
@@ -68,12 +96,13 @@ services:
       dockerfile: infrastructure/docker/api.Dockerfile
     command: ["node", "dist/imports/scan-worker.js"]
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgres://monytix_api:monytix_api_local@postgres:5432/monytix}
-      OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT:-}
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT:?OBJECT_STORAGE_ENDPOINT is required}
       OBJECT_STORAGE_REGION: ${OBJECT_STORAGE_REGION:-auto}
-      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:-}
-      OBJECT_STORAGE_ACCESS_KEY_ID: ${OBJECT_STORAGE_ACCESS_KEY_ID:-}
-      OBJECT_STORAGE_SECRET_ACCESS_KEY: ${OBJECT_STORAGE_SECRET_ACCESS_KEY:-}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:?OBJECT_STORAGE_BUCKET is required}
+      OBJECT_STORAGE_ACCESS_KEY_ID: ${OBJECT_STORAGE_ACCESS_KEY_ID:?OBJECT_STORAGE_ACCESS_KEY_ID is required}
+      OBJECT_STORAGE_SECRET_ACCESS_KEY: ${OBJECT_STORAGE_SECRET_ACCESS_KEY:?OBJECT_STORAGE_SECRET_ACCESS_KEY is required}
       CLAMAV_HOST: clamav
       CLAMAV_PORT: 3310
       STATEMENT_RETENTION_DAYS: ${STATEMENT_RETENTION_DAYS:-90}
@@ -81,9 +110,13 @@ services:
     depends_on:
       migrator:
         condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
       clamav:
-        condition: service_started
+        condition: service_healthy
     restart: unless-stopped
+    mem_limit: 512m
+    cpus: 0.5
 
   intelligence:
     build:
@@ -91,10 +124,21 @@ services:
       dockerfile: infrastructure/docker/intelligence.Dockerfile
     environment:
       PORT: 8000
-      DATABASE_URL: ${INTELLIGENCE_DATABASE_URL:-postgres://monytix_intelligence:monytix_intelligence_local@postgres:5432/monytix}
+      DATABASE_URL: ${INTELLIGENCE_DATABASE_URL:?INTELLIGENCE_DATABASE_URL is required}
     depends_on:
       migrator:
         condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: 0.5
 
 volumes:
   postgres_data:

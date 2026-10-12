@@ -73,8 +73,10 @@ test("read routes reject missing, expired, malformed, and oversized requests", a
     url: "/platform/ready",
     headers: { "x-request-id": "ready-check-1" },
   });
-  assert.equal(ready.statusCode, 200);
+  assert.equal(ready.statusCode, 503);
+  assert.equal(ready.json().status, "unconfigured");
   assert.equal(ready.json().checks.database, "unconfigured");
+  assert.equal(ready.json().checks.auth, "unconfigured");
   const logged = lines.join("");
   assert.equal(logged.includes(signed.token), false);
   await app.close();

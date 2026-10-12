@@ -1,6 +1,6 @@
 import { createObjectStorage, storageConfigFromEnv } from "./storage.js";
 import { runExtractOnce } from "./extract.js";
-import { runScanOnce, sweepRetention } from "./scan.js";
+import { pingScanner, runScanOnce, sweepRetention } from "./scan.js";
 
 const databaseUrl = process.env.DATABASE_URL?.trim() ?? "";
 const storageConfig = storageConfigFromEnv();
@@ -22,6 +22,7 @@ function logWorkerFailure(error: unknown): void {
 }
 
 async function tick(): Promise<void> {
+  await pingScanner(host, port);
   await runScanOnce(databaseUrl, storage, host, port);
   await runExtractOnce(databaseUrl, storage);
   await sweepRetention(databaseUrl, storage, abandonedHours, retentionDays);

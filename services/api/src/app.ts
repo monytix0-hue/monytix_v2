@@ -31,6 +31,7 @@ export type BuildOptions = {
   ledger?: LedgerRead | null;
   imports?: ImportStore | null;
   objectStorage?: ObjectStorage | null;
+  importScanner?: () => Promise<void>;
   platformProbe?: PlatformProbe;
   rateLimit?: { limit: number; windowMs: number };
 };
@@ -49,6 +50,10 @@ const redactedPaths = [
   "*.merchant_description",
   "*.merchantDescription",
   "*.url",
+  "*.password",
+  "*.secret",
+  "*.secretAccessKey",
+  "*.accessKeyId",
 ];
 
 export function productionLogger(): FastifyServerOptions["logger"] {
@@ -129,7 +134,7 @@ export async function buildApp(options: BuildOptions = {}): Promise<FastifyInsta
   await app.register(accountsRoutes);
   await app.register(transactionsRoutes, { manual: manualTransactions });
   await app.register(ledgerRoutes, { ledger });
-  await app.register(importRoutes, { imports, storage: objectStorage });
+  await app.register(importRoutes, { imports, storage: objectStorage, scanner: options.importScanner });
   await app.register(sourcesRoutes);
   await app.register(statementsRoutes);
   await app.register(personalRoutes);

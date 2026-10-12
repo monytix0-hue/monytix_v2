@@ -3,6 +3,7 @@ set -euo pipefail
 
 : "${PGHOST:?PGHOST is required}"
 : "${PGUSER:?PGUSER is required}"
+: "${PGPASSWORD:?PGPASSWORD is required}"
 : "${PGDATABASE:?PGDATABASE is required}"
 : "${API_DB_PASSWORD:?API_DB_PASSWORD is required}"
 : "${INTELLIGENCE_DB_PASSWORD:?INTELLIGENCE_DB_PASSWORD is required}"
@@ -82,5 +83,11 @@ psql -v ON_ERROR_STOP=1 \
   -v api_password="$API_DB_PASSWORD" \
   -v intelligence_password="$INTELLIGENCE_DB_PASSWORD" \
   -f /database/bootstrap/passwords.sql
+
+role_count="$(psql_value "SELECT count(*) FROM pg_roles WHERE rolname IN ('monytix_api', 'monytix_intelligence') AND rolcanlogin AND NOT rolbypassrls AND NOT rolinherit")"
+if [ "$role_count" != "2" ]; then
+  echo "database roles are missing the required login boundary" >&2
+  exit 1
+fi
 
 echo "Migrations applied"

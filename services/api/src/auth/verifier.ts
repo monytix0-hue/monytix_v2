@@ -57,6 +57,14 @@ function readSubject(payload: JWTPayload): string {
   return payload.sub;
 }
 
+export function productionAuthKey(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  if (env.NODE_ENV === "production") {
+    return undefined;
+  }
+  const key = env.MONYTIX_AUTH_PUBLIC_KEY_PEM?.trim() ?? "";
+  return key.length > 0 ? key : undefined;
+}
+
 export function revokedSubjectsFromEnv(value: string | undefined): Set<string> {
   if (!value) {
     return new Set();

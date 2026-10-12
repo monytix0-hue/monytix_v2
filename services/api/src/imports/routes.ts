@@ -6,6 +6,7 @@ import { createImportStore, finalObjectKey, type ImportStore } from "./store.js"
 export type ImportRouteOptions = {
   imports: ImportStore | null;
   storage: ObjectStorage | null;
+  scanner?: () => Promise<void>;
 };
 
 const fileTypes = new Set(["PDF", "XLS", "XLSX", "CSV"]);
@@ -15,6 +16,7 @@ const maxBytes = 10_485_760;
 export const importRoutes: FastifyPluginAsync<ImportRouteOptions> = async (app, options) => {
   const imports = options.imports;
   const storage = options.storage;
+  const scanner = options.scanner;
 
   app.post("/v1/imports", async (request, reply) => {
     if (!request.actorId) {
@@ -29,6 +31,9 @@ export const importRoutes: FastifyPluginAsync<ImportRouteOptions> = async (app, 
       return reply.status(422).send({ error: "invalid_request" });
     }
     if (!imports || !storage) {
+      return reply.status(503).send({ error: "unavailable" });
+    }
+    if (!(await scannerAvailable(scanner))) {
       return reply.status(503).send({ error: "unavailable" });
     }
     try {
@@ -89,7 +94,7 @@ export const importRoutes: FastifyPluginAsync<ImportRouteOptions> = async (app, 
   });
 
   app.post("/v1/imports/:importId/complete", async (request, reply) => {
-    return completeImport(request, reply, imports, storage);
+    return completeImport(request, reply, imports, storage, scanner);
   });
 
   app.get("/v1/imports/:importId/status", async (request, reply) => {
@@ -188,11 +193,24 @@ export const importRoutes: FastifyPluginAsync<ImportRouteOptions> = async (app, 
   });
 };
 
+async function scannerAvailable(scanner: (() => Promise<void>) | undefined): Promise<boolean> {
+  if (!scanner) {
+    return true;
+  }
+  try {
+    await scanner();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function completeImport(
   request: FastifyRequest,
   reply: FastifyReply,
   imports: ImportStore | null,
   storage: ObjectStorage | null,
+  scanner: (() => Promise<void>) | undefined,
 ) {
   if (!request.actorId) {
     return reply.status(401).send({ error: "unauthorized" });
@@ -214,6 +232,9 @@ async function completeImport(
     const data = (current.body as { data: Record<string, unknown> }).data;
     if (data.sealed === true) {
       return replayCompletion(reply, imports, request, importId, data, finalKey);
+    }
+    if (!(await scannerAvailable(scanner))) {
+      return reply.status(503).send({ error: "unavailable" });
     }
     const object = await storage.readObject(stagingKey);
     if (!object) {

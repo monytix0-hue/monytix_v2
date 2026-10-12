@@ -48,12 +48,13 @@ test("a scan left in progress can be claimed again only after its lease", async 
   await admin.connect();
   await api.connect();
   const stamp = Date.now().toString();
+  let ownerId = "";
   try {
     const owner = await admin.query<{ owner_id: string }>(
       "INSERT INTO core.owner (owner_type, display_name) VALUES ('PERSON', $1) RETURNING owner_id",
       [`scan-lease-${stamp}`],
     );
-    const ownerId = owner.rows[0]!.owner_id;
+    ownerId = owner.rows[0]!.owner_id;
     const held = await admin.query<{ outbox_event_id: string }>(
       `INSERT INTO ops.outbox_event (
          owner_id, semantic_trigger_code, aggregate_type, event_payload, dedupe_key, status, next_attempt_at
@@ -109,6 +110,15 @@ test("a scan left in progress can be claimed again only after its lease", async 
       );
     }
   } finally {
+    if (ownerId) {
+      await admin.query("DELETE FROM ops.outbox_event WHERE owner_id = $1", [ownerId]);
+      await admin.query(
+        `DELETE FROM core.owner
+          WHERE owner_id = $1
+            AND NOT EXISTS (SELECT 1 FROM core.account_ownership ownership WHERE ownership.owner_id = core.owner.owner_id)`,
+        [ownerId],
+      );
+    }
     await api.end();
     await admin.end();
   }

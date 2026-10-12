@@ -12,6 +12,8 @@ import { platformRoutes } from "./platform/index.js";
 import { projectionsRoutes } from "./projections/index.js";
 import { sourcesRoutes } from "./sources/index.js";
 import { statementsRoutes } from "./statements/index.js";
+import type { LedgerRead } from "./ledger/read.js";
+import { ledgerRoutes } from "./ledger/routes.js";
 import type { ManualTransactionStore } from "./transactions/manual.js";
 import type { ImportStore } from "./imports/store.js";
 import type { ObjectStorage } from "./imports/storage.js";
@@ -24,6 +26,7 @@ export type BuildOptions = {
   auth?: AuthConfig;
   identity?: IdentityStore | null;
   manualTransactions?: ManualTransactionStore | null;
+  ledger?: LedgerRead | null;
   imports?: ImportStore | null;
   objectStorage?: ObjectStorage | null;
 };
@@ -61,6 +64,7 @@ export async function buildApp(options: BuildOptions = {}): Promise<FastifyInsta
   } };
   const identity = options.identity ?? null;
   const manualTransactions = options.manualTransactions ?? null;
+  const ledger = options.ledger ?? null;
   const imports = options.imports ?? null;
   const objectStorage = options.objectStorage ?? null;
 
@@ -73,6 +77,11 @@ export async function buildApp(options: BuildOptions = {}): Promise<FastifyInsta
   if (manualTransactions) {
     app.addHook("onClose", async () => {
       await manualTransactions.close();
+    });
+  }
+  if (ledger) {
+    app.addHook("onClose", async () => {
+      await ledger.close();
     });
   }
   if (imports) {
@@ -90,6 +99,7 @@ export async function buildApp(options: BuildOptions = {}): Promise<FastifyInsta
   await app.register(usersRoutes);
   await app.register(accountsRoutes);
   await app.register(transactionsRoutes, { manual: manualTransactions });
+  await app.register(ledgerRoutes, { ledger });
   await app.register(importRoutes, { imports, storage: objectStorage });
   await app.register(sourcesRoutes);
   await app.register(statementsRoutes);

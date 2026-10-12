@@ -1,6 +1,7 @@
 import { buildApp, productionLogger } from "./app.js";
 import { createPgIdentity } from "./auth/identity.js";
 import { createFirebaseVerifier, revokedSubjectsFromEnv } from "./auth/verifier.js";
+import { createLedgerRead } from "./ledger/read.js";
 import { createManualTransactionStore } from "./transactions/manual.js";
 import { createImportStore } from "./imports/store.js";
 import { createObjectStorage, storageConfigFromEnv } from "./imports/storage.js";
@@ -32,6 +33,7 @@ const app = await buildApp({
   auth,
   identity: databaseUrl.length > 0 ? createPgIdentity(databaseUrl) : null,
   manualTransactions: databaseUrl.length > 0 ? createManualTransactionStore(databaseUrl) : null,
+  ledger: databaseUrl.length > 0 ? createLedgerRead(databaseUrl) : null,
   imports: databaseUrl.length > 0 ? createImportStore(databaseUrl) : null,
   objectStorage: storageConfigFromEnv() ? createObjectStorage(storageConfigFromEnv()!) : null,
 });

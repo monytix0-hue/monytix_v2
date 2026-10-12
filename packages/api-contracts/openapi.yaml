@@ -138,6 +138,53 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ModuleStub"
+  /v1/transactions:
+    get:
+      operationId: listLedgerTransactions
+      summary: Current canonical transactions for the authenticated owner.
+      parameters:
+        - in: query
+          name: cursor
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 50 }
+        - in: query
+          name: from
+          schema: { type: string, format: date }
+        - in: query
+          name: to
+          schema: { type: string, format: date }
+        - in: query
+          name: accountId
+          schema: { type: string, format: uuid }
+        - in: query
+          name: direction
+          schema: { type: string, enum: [IN, OUT] }
+      responses:
+        "200":
+          description: Ledger read v0.1 page. Missing interpretations stay null.
+  /v1/accounts/summaries:
+    get:
+      operationId: listAccountSummaries
+      summary: Account totals and an available balance only when a snapshot exists.
+      responses:
+        "200":
+          description: Account summary v0.1.
+  /v1/finance/overview:
+    get:
+      operationId: getFinanceOverview
+      summary: Recorded inflow and outflow by currency. Ordinary outflow excludes transfers, credit-card payments, and loan repayments.
+      responses:
+        "200":
+          description: Finance overview v0.1.
+  /v1/molybot/ask:
+    post:
+      operationId: askMolybot
+      summary: Deterministic ledger answers. No external model.
+      responses:
+        "200":
+          description: MolyBot read v0.1.
   /platform/health:
     get:
       operationId: getPlatformHealth

@@ -1,4 +1,5 @@
 import pg from "pg";
+import { openPool } from "../db/pool.js";
 
 export type LedgerRead = {
   listTransactions(input: ListInput): Promise<TransactionPage>;
@@ -122,8 +123,39 @@ type Row = {
 
 const excludedOrdinaryFamilies = ["INTERNAL_TRANSFER", "PERSON_TRANSFER", "CREDIT_CARD_PAYMENT", "LOAN_REPAYMENT"];
 
-const listSql = `
-SELECT
+const pageFilters = `
+  cv.is_current = true
+  AND lt.identity_status = 'ACTIVE'
+  AND cv.duplicate_outcome <> 'EQUIVALENT_SUPERSEDED'
+  AND ($1::uuid IS NULL OR cv.financial_account_id = $1)
+  AND ($2::text IS NULL OR cv.direction = $2)
+  AND ($3::date IS NULL OR cv.transaction_date >= $3)
+  AND ($4::date IS NULL OR cv.transaction_date <= $4)
+  AND (
+    $5::date IS NULL
+    OR cv.transaction_date < $5
+    OR (cv.transaction_date = $5 AND cv.logical_transaction_id < $6::uuid)
+  )
+`;
+
+const interpretationJoins = `
+LEFT JOIN intel.financial_event_resolution e
+  ON e.logical_transaction_id = cv.logical_transaction_id
+ AND e.canonical_transaction_version_id = cv.canonical_transaction_version_id
+ AND e.is_current
+LEFT JOIN intel.category_resolution c
+  ON c.financial_event_resolution_id = e.financial_event_resolution_id
+ AND c.is_current
+LEFT JOIN intel.purpose_resolution p
+  ON p.financial_event_resolution_id = e.financial_event_resolution_id
+ AND p.is_current
+LEFT JOIN intel.transaction_party_resolution party
+  ON party.logical_transaction_id = cv.logical_transaction_id
+ AND party.canonical_transaction_version_id = cv.canonical_transaction_version_id
+ AND party.is_current
+`;
+
+const listColumns = `
   cv.logical_transaction_id,
   cv.canonical_transaction_version_id,
   cv.financial_account_id,
@@ -145,37 +177,44 @@ SELECT
   p.purpose_code,
   party.resolution_status AS party_status,
   party.f10c_version
-FROM core.canonical_transaction_version cv
-JOIN core.logical_transaction lt ON lt.logical_transaction_id = cv.logical_transaction_id
-LEFT JOIN intel.financial_event_resolution e
-  ON e.logical_transaction_id = cv.logical_transaction_id
- AND e.canonical_transaction_version_id = cv.canonical_transaction_version_id
- AND e.is_current
-LEFT JOIN intel.category_resolution c
-  ON c.financial_event_resolution_id = e.financial_event_resolution_id
- AND c.is_current
-LEFT JOIN intel.purpose_resolution p
-  ON p.financial_event_resolution_id = e.financial_event_resolution_id
- AND p.is_current
-LEFT JOIN intel.transaction_party_resolution party
-  ON party.logical_transaction_id = cv.logical_transaction_id
- AND party.canonical_transaction_version_id = cv.canonical_transaction_version_id
- AND party.is_current
-WHERE cv.is_current = true
-  AND lt.identity_status = 'ACTIVE'
-  AND cv.duplicate_outcome <> 'EQUIVALENT_SUPERSEDED'
-  AND ($1::uuid IS NULL OR cv.financial_account_id = $1)
-  AND ($2::text IS NULL OR cv.direction = $2)
-  AND ($3::date IS NULL OR cv.transaction_date >= $3)
-  AND ($4::date IS NULL OR cv.transaction_date <= $4)
-  AND (
-    $5::date IS NULL
-    OR cv.transaction_date < $5
-    OR (cv.transaction_date = $5 AND cv.logical_transaction_id < $6::uuid)
-  )
-  AND ($8::text IS NULL OR (e.resolution_outcome = 'RESOLVED' AND e.event_family = $8))
+`;
+
+const listSql = `
+SELECT ${listColumns}
+FROM (
+  SELECT cv.logical_transaction_id, cv.canonical_transaction_version_id, cv.financial_account_id,
+         cv.amount, cv.currency_code, cv.direction, cv.transaction_date, cv.raw_description,
+         cv.duplicate_outcome, cv.change_provenance
+    FROM core.canonical_transaction_version cv
+    JOIN core.logical_transaction lt ON lt.logical_transaction_id = cv.logical_transaction_id
+   WHERE ${pageFilters}
+   ORDER BY cv.transaction_date DESC, cv.logical_transaction_id DESC
+   LIMIT $7
+) cv
+${interpretationJoins}
 ORDER BY cv.transaction_date DESC, cv.logical_transaction_id DESC
-LIMIT $7
+`;
+
+const listFamilySql = `
+SELECT ${listColumns}
+FROM (
+  SELECT cv.logical_transaction_id, cv.canonical_transaction_version_id, cv.financial_account_id,
+         cv.amount, cv.currency_code, cv.direction, cv.transaction_date, cv.raw_description,
+         cv.duplicate_outcome, cv.change_provenance
+    FROM core.canonical_transaction_version cv
+    JOIN core.logical_transaction lt ON lt.logical_transaction_id = cv.logical_transaction_id
+    JOIN intel.financial_event_resolution e
+      ON e.logical_transaction_id = cv.logical_transaction_id
+     AND e.canonical_transaction_version_id = cv.canonical_transaction_version_id
+     AND e.is_current
+   WHERE ${pageFilters}
+     AND e.resolution_outcome = 'RESOLVED'
+     AND e.event_family = $8
+   ORDER BY cv.transaction_date DESC, cv.logical_transaction_id DESC
+   LIMIT $7
+) cv
+${interpretationJoins}
+ORDER BY cv.transaction_date DESC, cv.logical_transaction_id DESC
 `;
 
 export function encodeCursor(date: string, id: string): string {
@@ -249,13 +288,14 @@ function mapItem(row: Row): TransactionItem {
 }
 
 export function createLedgerRead(databaseUrl: string): LedgerRead {
-  const pool = new pg.Pool({ connectionString: databaseUrl, max: 4 });
+  const pool = openPool(databaseUrl);
 
   async function withOwner<T>(ownerId: string, read: (client: pg.PoolClient) => Promise<T>): Promise<T> {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
       await client.query("SELECT set_config('app.owner_id', $1, true)", [ownerId]);
+      await client.query("SELECT set_config('jit', 'off', true)");
       const value = await read(client);
       await client.query("COMMIT");
       return value;
@@ -271,7 +311,7 @@ export function createLedgerRead(databaseUrl: string): LedgerRead {
     async listTransactions(input) {
       const cursor = input.cursor ? decodeCursor(input.cursor) : null;
       return withOwner(input.ownerId, async (client) => {
-        const rows = await client.query<Row>(listSql, [
+        const params = [
           input.accountId,
           input.direction,
           input.from,
@@ -279,8 +319,11 @@ export function createLedgerRead(databaseUrl: string): LedgerRead {
           cursor?.date ?? null,
           cursor?.id ?? null,
           input.limit + 1,
-          input.eventFamily,
-        ]);
+        ];
+        const rows = await client.query<Row>(
+          input.eventFamily ? listFamilySql : listSql,
+          input.eventFamily ? [...params, input.eventFamily] : params,
+        );
         const page = rows.rows.slice(0, input.limit).map(mapItem);
         const extra = rows.rows.length > input.limit ? page[page.length - 1] : null;
         return {
@@ -372,101 +415,80 @@ export function createLedgerRead(databaseUrl: string): LedgerRead {
           count: number;
           without_event: number;
           without_use: number;
+          events: Array<{ family: string | null; outcome: string; count: number; inflow: string; outflow: string }> | null;
+          uses: Array<{ status: string; code: string | null; count: number }> | null;
         }>(
-          `SELECT cv.currency_code,
-                  COALESCE(sum(cv.amount) FILTER (WHERE cv.direction = 'IN'), 0)::text AS inflow,
-                  COALESCE(sum(cv.amount) FILTER (WHERE cv.direction = 'OUT'), 0)::text AS outflow,
-                  COALESCE(sum(cv.amount) FILTER (
-                    WHERE cv.direction = 'OUT'
-                      AND e.resolution_outcome = 'RESOLVED'
-                      AND e.event_family <> ALL ($3::text[])
+          `WITH current_rows AS MATERIALIZED (
+             SELECT cv.currency_code, cv.amount, cv.direction,
+                    e.event_family, e.resolution_outcome, e.financial_event_resolution_id,
+                    c.category_status, c.category_code, c.category_resolution_id
+               FROM core.canonical_transaction_version cv
+               JOIN core.logical_transaction lt ON lt.logical_transaction_id = cv.logical_transaction_id
+               LEFT JOIN intel.financial_event_resolution e
+                 ON e.logical_transaction_id = cv.logical_transaction_id
+                AND e.canonical_transaction_version_id = cv.canonical_transaction_version_id
+                AND e.is_current
+               LEFT JOIN intel.category_resolution c
+                 ON c.financial_event_resolution_id = e.financial_event_resolution_id
+                AND c.is_current
+              WHERE cv.is_current
+                AND lt.identity_status = 'ACTIVE'
+                AND cv.duplicate_outcome <> 'EQUIVALENT_SUPERSEDED'
+                AND cv.amount IS NOT NULL
+                AND cv.currency_code IS NOT NULL
+                AND ($1::date IS NULL OR cv.transaction_date >= $1)
+                AND ($2::date IS NULL OR cv.transaction_date <= $2)
+                AND ($4::text IS NULL OR cv.currency_code = $4)
+           )
+           SELECT currency_code,
+                  COALESCE(sum(amount) FILTER (WHERE direction = 'IN'), 0)::text AS inflow,
+                  COALESCE(sum(amount) FILTER (WHERE direction = 'OUT'), 0)::text AS outflow,
+                  COALESCE(sum(amount) FILTER (
+                    WHERE direction = 'OUT'
+                      AND resolution_outcome = 'RESOLVED'
+                      AND event_family <> ALL ($3::text[])
                   ), 0)::text AS ordinary_outflow,
                   count(*)::int AS count,
-                  count(*) FILTER (WHERE e.financial_event_resolution_id IS NULL)::int AS without_event,
-                  count(*) FILTER (WHERE c.category_resolution_id IS NULL)::int AS without_use
-             FROM core.canonical_transaction_version cv
-             JOIN core.logical_transaction lt ON lt.logical_transaction_id = cv.logical_transaction_id
-             LEFT JOIN intel.financial_event_resolution e
-               ON e.logical_transaction_id = cv.logical_transaction_id
-              AND e.canonical_transaction_version_id = cv.canonical_transaction_version_id
-              AND e.is_current
-             LEFT JOIN intel.category_resolution c
-               ON c.financial_event_resolution_id = e.financial_event_resolution_id
-              AND c.is_current
-            WHERE cv.is_current
-              AND lt.identity_status = 'ACTIVE'
-              AND cv.duplicate_outcome <> 'EQUIVALENT_SUPERSEDED'
-              AND cv.amount IS NOT NULL
-              AND cv.currency_code IS NOT NULL
-              AND ($1::date IS NULL OR cv.transaction_date >= $1)
-              AND ($2::date IS NULL OR cv.transaction_date <= $2)
-              AND ($4::text IS NULL OR cv.currency_code = $4)
-            GROUP BY cv.currency_code
-            ORDER BY cv.currency_code`,
+                  count(*) FILTER (WHERE financial_event_resolution_id IS NULL)::int AS without_event,
+                  count(*) FILTER (WHERE category_resolution_id IS NULL)::int AS without_use,
+                  (
+                    SELECT jsonb_agg(jsonb_build_object(
+                      'family', event_family,
+                      'outcome', outcome,
+                      'count', count,
+                      'inflow', inflow,
+                      'outflow', outflow
+                    ) ORDER BY event_family)
+                    FROM (
+                      SELECT event_family,
+                             COALESCE(resolution_outcome, 'UNAVAILABLE') AS outcome,
+                             count(*)::int AS count,
+                             COALESCE(sum(amount) FILTER (WHERE direction = 'IN'), 0)::text AS inflow,
+                             COALESCE(sum(amount) FILTER (WHERE direction = 'OUT'), 0)::text AS outflow
+                        FROM current_rows grouped
+                       WHERE grouped.currency_code = current_rows.currency_code
+                       GROUP BY event_family, resolution_outcome
+                    ) event_rows
+                  ) AS events,
+                  (
+                    SELECT jsonb_agg(jsonb_build_object(
+                      'status', status,
+                      'code', code,
+                      'count', count
+                    ) ORDER BY status, code)
+                    FROM (
+                      SELECT COALESCE(category_status, 'UNAVAILABLE') AS status,
+                             category_code AS code,
+                             count(*)::int AS count
+                        FROM current_rows grouped
+                       WHERE grouped.currency_code = current_rows.currency_code
+                       GROUP BY category_status, category_code
+                    ) use_rows
+                  ) AS uses
+             FROM current_rows
+            GROUP BY currency_code
+            ORDER BY currency_code`,
           [input.from, input.to, excludedOrdinaryFamilies, input.currency],
-        );
-        const events = await client.query<{
-          currency_code: string;
-          event_family: string | null;
-          resolution_outcome: string;
-          count: number;
-          inflow: string;
-          outflow: string;
-        }>(
-          `SELECT cv.currency_code,
-                  e.event_family,
-                  COALESCE(e.resolution_outcome, 'UNAVAILABLE') AS resolution_outcome,
-                  count(*)::int AS count,
-                  COALESCE(sum(cv.amount) FILTER (WHERE cv.direction = 'IN'), 0)::text AS inflow,
-                  COALESCE(sum(cv.amount) FILTER (WHERE cv.direction = 'OUT'), 0)::text AS outflow
-             FROM core.canonical_transaction_version cv
-             JOIN core.logical_transaction lt ON lt.logical_transaction_id = cv.logical_transaction_id
-             LEFT JOIN intel.financial_event_resolution e
-               ON e.logical_transaction_id = cv.logical_transaction_id
-              AND e.canonical_transaction_version_id = cv.canonical_transaction_version_id
-              AND e.is_current
-            WHERE cv.is_current
-              AND lt.identity_status = 'ACTIVE'
-              AND cv.duplicate_outcome <> 'EQUIVALENT_SUPERSEDED'
-              AND cv.amount IS NOT NULL
-              AND cv.currency_code IS NOT NULL
-              AND ($1::date IS NULL OR cv.transaction_date >= $1)
-              AND ($2::date IS NULL OR cv.transaction_date <= $2)
-              AND ($3::text IS NULL OR cv.currency_code = $3)
-            GROUP BY cv.currency_code, e.event_family, e.resolution_outcome
-            ORDER BY cv.currency_code, e.event_family`,
-          [input.from, input.to, input.currency],
-        );
-        const uses = await client.query<{
-          currency_code: string;
-          category_status: string;
-          category_code: string | null;
-          count: number;
-        }>(
-          `SELECT cv.currency_code,
-                  COALESCE(c.category_status, 'UNAVAILABLE') AS category_status,
-                  c.category_code,
-                  count(*)::int AS count
-             FROM core.canonical_transaction_version cv
-             JOIN core.logical_transaction lt ON lt.logical_transaction_id = cv.logical_transaction_id
-             LEFT JOIN intel.financial_event_resolution e
-               ON e.logical_transaction_id = cv.logical_transaction_id
-              AND e.canonical_transaction_version_id = cv.canonical_transaction_version_id
-              AND e.is_current
-             LEFT JOIN intel.category_resolution c
-               ON c.financial_event_resolution_id = e.financial_event_resolution_id
-              AND c.is_current
-            WHERE cv.is_current
-              AND lt.identity_status = 'ACTIVE'
-              AND cv.duplicate_outcome <> 'EQUIVALENT_SUPERSEDED'
-              AND cv.amount IS NOT NULL
-              AND cv.currency_code IS NOT NULL
-              AND ($1::date IS NULL OR cv.transaction_date >= $1)
-              AND ($2::date IS NULL OR cv.transaction_date <= $2)
-              AND ($3::text IS NULL OR cv.currency_code = $3)
-            GROUP BY cv.currency_code, c.category_status, c.category_code
-            ORDER BY cv.currency_code, c.category_status, c.category_code`,
-          [input.from, input.to, input.currency],
         );
         return {
           from: input.from,
@@ -477,22 +499,8 @@ export function createLedgerRead(databaseUrl: string): LedgerRead {
             outflow: total.outflow,
             ordinaryOutflow: total.ordinary_outflow,
             transactionCount: total.count,
-            events: events.rows
-              .filter((row) => row.currency_code.trim() === total.currency_code.trim())
-              .map((row) => ({
-                family: row.event_family,
-                outcome: row.resolution_outcome,
-                count: row.count,
-                inflow: row.inflow,
-                outflow: row.outflow,
-              })),
-            uses: uses.rows
-              .filter((row) => row.currency_code.trim() === total.currency_code.trim())
-              .map((row) => ({
-                status: row.category_status,
-                code: row.category_code,
-                count: row.count,
-              })),
+            events: total.events ?? [],
+            uses: total.uses ?? [],
             transactionsWithoutEvent: total.without_event,
             transactionsWithoutUse: total.without_use,
           })),

@@ -53,6 +53,24 @@ test("GET /auth rejects a revoked token", async () => {
   await app.close();
 });
 
+test("GET /auth ignores a client-supplied user id", async () => {
+  const { token, options } = await signToken({ subject: "user-ok", expiresIn: "1h" });
+  const app = await buildApp(options);
+  const response = await app.inject({
+    method: "GET",
+    url: "/auth?user_id=forged-user",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "x-user-id": "forged-user",
+    },
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.json().actorId, "actor-test");
+  assert.equal(JSON.stringify(response.json()).includes("forged-user"), false);
+  assert.equal(response.body.includes(token), false);
+  await app.close();
+});
+
 test("GET /auth returns the actor when the token is valid", async () => {
   const { token, options } = await signToken({ subject: "user-ok", expiresIn: "1h" });
   const app = await buildApp(options);

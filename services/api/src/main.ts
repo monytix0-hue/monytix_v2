@@ -1,6 +1,6 @@
 import { buildApp, productionLogger } from "./app.js";
 import { createPgIdentity } from "./auth/identity.js";
-import { createFirebaseVerifier, productionAuthKey, revokedSubjectsFromEnv } from "./auth/verifier.js";
+import { createLiveAdminVerifier, isRequestAuthConfigured } from "./auth/admin-verifier.js";
 import { createLedgerRead } from "./ledger/read.js";
 import { createManualTransactionStore } from "./transactions/manual.js";
 import { createImportStore } from "./imports/store.js";
@@ -11,14 +11,10 @@ const port = Number(process.env.PORT ?? 8080);
 const host = "0.0.0.0";
 const projectId = process.env.FIREBASE_PROJECT_ID?.trim() ?? "";
 const databaseUrl = process.env.DATABASE_URL?.trim() ?? "";
-const auth = projectId
+const auth = isRequestAuthConfigured(process.env)
   ? {
       configured: true,
-      verify: await createFirebaseVerifier({
-        projectId,
-        publicKeyPem: productionAuthKey(),
-        revokedSubjects: revokedSubjectsFromEnv(process.env.MONYTIX_REVOKED_SUBJECTS),
-      }),
+      verify: await createLiveAdminVerifier(process.env),
     }
   : {
       configured: false,

@@ -7,14 +7,15 @@
     "dev": "tsx src/main.ts",
     "start": "node dist/main.js",
     "build": "tsc -p tsconfig.json",
-    "test": "tsx --test tests/auth.test.ts tests/authenticated-stubs.test.ts tests/manual-transaction.auth.test.ts tests/manual-transaction.integration.test.ts tests/import-auth.test.ts tests/import.integration.test.ts tests/extract.integration.test.ts tests/mapping.integration.test.ts tests/review.integration.test.ts tests/hardening.integration.test.ts tests/users.test.ts tests/accounts.test.ts tests/transactions.test.ts tests/sources.test.ts tests/statements.test.ts tests/personal.test.ts tests/business.test.ts tests/decisions.test.ts tests/missions.test.ts tests/nudges.test.ts tests/projections.test.ts tests/platform.test.ts"
+    "test": "tsx --test tests/auth.test.ts tests/admin-verifier.test.ts tests/intelligence-surface.test.ts tests/provision-concurrency.integration.test.ts tests/authenticated-stubs.test.ts tests/manual-transaction.auth.test.ts tests/manual-transaction.integration.test.ts tests/import-auth.test.ts tests/import.integration.test.ts tests/extract.integration.test.ts tests/mapping.integration.test.ts tests/review.integration.test.ts tests/hardening.integration.test.ts tests/users.test.ts tests/accounts.test.ts tests/transactions.test.ts tests/sources.test.ts tests/statements.test.ts tests/personal.test.ts tests/business.test.ts tests/decisions.test.ts tests/missions.test.ts tests/nudges.test.ts tests/projections.test.ts tests/platform.test.ts"
   },
   "dependencies": {
-    "fastify": "^5.6.1",
-    "jose": "^6.1.0",
-    "pg": "^8.16.3",
     "@aws-sdk/client-s3": "^3.901.0",
-    "@aws-sdk/s3-request-presigner": "^3.901.0"
+    "@aws-sdk/s3-request-presigner": "^3.901.0",
+    "fastify": "^5.6.1",
+    "firebase-admin": "^13.10.0",
+    "jose": "^6.1.0",
+    "pg": "^8.16.3"
   },
   "devDependencies": {
     "@types/node": "^22.18.6",

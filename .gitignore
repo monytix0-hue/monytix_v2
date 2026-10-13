@@ -1,5 +1,7 @@
 .env
+.local/
 node_modules/
+.next/
 dist/
 __pycache__/
 *.py[cod]
@@ -13,6 +15,9 @@ __pycache__/
 local.properties
 apps/android/**/build/
 apps/android/.cxx/
+apps/android/app/google-services.json
+apps/ios/**/GoogleService-Info.plist
+*firebase-adminsdk*.json
 
 DerivedData/
 xcuserdata/

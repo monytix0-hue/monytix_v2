@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>MonytixAPIBaseURL</key>
+	<string></string>
+	<key>UIAppFonts</key>
+	<array>
+		<string>Fonts/inter_regular.ttf</string>
+		<string>Fonts/inter_semibold.ttf</string>
+		<string>Fonts/inter_bold.ttf</string>
+		<string>Fonts/inter_extrabold.ttf</string>
+	</array>
+</dict>
+</plist>

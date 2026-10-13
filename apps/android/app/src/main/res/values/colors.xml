@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="personal_canvas">#F9FAF8</color>
+    <color name="business_canvas">#F4F7FA</color>
+    <color name="mx_night_sky">#0D1218</color>
+    <color name="mx_sage_green">#8ABC9E</color>
+    <color name="mx_warm_amber">#C4956A</color>
+</resources>

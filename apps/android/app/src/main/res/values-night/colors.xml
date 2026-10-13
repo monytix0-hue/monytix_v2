@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="personal_canvas">#0A1530</color>
+    <color name="business_canvas">#0F1418</color>
+</resources>

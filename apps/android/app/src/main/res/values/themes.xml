@@ -1,4 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.Monytix" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.Monytix" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/business_canvas</item>
+        <item name="android:statusBarColor">@color/business_canvas</item>
+        <item name="android:navigationBarColor">@color/business_canvas</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:forceDarkAllowed">false</item>
+    </style>
+
+    <style name="Theme.Monytix.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/mx_night_sky</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_monytix_omark</item>
+        <item name="windowSplashScreenIconBackgroundColor">@color/mx_night_sky</item>
+        <item name="postSplashScreenTheme">@style/Theme.Monytix</item>
+    </style>
 </resources>

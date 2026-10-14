@@ -6,6 +6,8 @@ import { createManualTransactionStore } from "./transactions/manual.js";
 import { createImportStore } from "./imports/store.js";
 import { pingScanner } from "./imports/scan.js";
 import { createObjectStorage, storageConfigFromEnv } from "./imports/storage.js";
+import { createPgGmailStore } from "./gmail/pg-store.js";
+import { verifyGoogleOidc } from "./gmail/oidc.js";
 
 const port = Number(process.env.PORT ?? 8080);
 const host = "0.0.0.0";
@@ -43,6 +45,16 @@ const app = await buildApp({
     storage: objectStorage ? await objectStorage.probe().then(() => "ok" as const).catch(() => "down" as const) : "unconfigured",
     scanner: await pingScanner(scannerHost, scannerPort).then(() => "ok" as const).catch(() => "down" as const),
   }),
+  gmail: {
+    store: databaseUrl.length > 0 ? createPgGmailStore(databaseUrl) : null,
+    audience: process.env.GMAIL_PUBSUB_AUDIENCE?.trim() ?? "",
+    allowUnauthenticated: process.env.GMAIL_PUBSUB_ALLOW_UNAUTHENTICATED === "true",
+    verify: (token) => verifyGoogleOidc(token, {
+      audience: process.env.GMAIL_PUBSUB_AUDIENCE?.trim() ?? "",
+      publicKeyPem: process.env.GMAIL_PUBSUB_OIDC_PUBLIC_KEY?.trim() ?? "",
+      serviceAccountEmail: process.env.GMAIL_PUBSUB_PUSH_SERVICE_ACCOUNT?.trim() || undefined,
+    }),
+  },
 });
 
 try {

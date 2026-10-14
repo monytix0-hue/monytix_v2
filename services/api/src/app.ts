@@ -20,6 +20,7 @@ import type { ManualTransactionStore } from "./transactions/manual.js";
 import type { ImportStore } from "./imports/store.js";
 import type { ObjectStorage } from "./imports/storage.js";
 import { importRoutes } from "./imports/routes.js";
+import { gmailWebhookRoutes, type GmailWebhookOptions } from "./gmail/index.js";
 import { transactionsRoutes } from "./transactions/index.js";
 import { usersRoutes } from "./users/index.js";
 
@@ -32,11 +33,12 @@ export type BuildOptions = {
   imports?: ImportStore | null;
   objectStorage?: ObjectStorage | null;
   importScanner?: () => Promise<void>;
+  gmail?: GmailWebhookOptions;
   platformProbe?: PlatformProbe;
   rateLimit?: { limit: number; windowMs: number };
 };
 
-const redactedPaths = [
+export const redactedPaths = [
   "req.headers.authorization",
   "req.headers.cookie",
   "res.headers['set-cookie']",
@@ -54,6 +56,12 @@ const redactedPaths = [
   "*.secret",
   "*.secretAccessKey",
   "*.accessKeyId",
+  "*.credential_ref",
+  "*.credentialRef",
+  "*.refresh_token",
+  "*.refreshToken",
+  "*.messageBody",
+  "*.body",
 ];
 
 export function productionLogger(): FastifyServerOptions["logger"] {
@@ -144,6 +152,20 @@ export async function buildApp(options: BuildOptions = {}): Promise<FastifyInsta
   await app.register(nudgesRoutes);
   await app.register(projectionsRoutes);
   await app.register(platformRoutes, { probe: options.platformProbe });
+  if (options.gmail?.store?.close) {
+    const close = options.gmail.store.close;
+    app.addHook("onClose", async () => {
+      await close();
+    });
+  }
+  await app.register(gmailWebhookRoutes, options.gmail ?? {
+    store: null,
+    audience: "",
+    allowUnauthenticated: false,
+    verify: async () => {
+      throw new Error("gmail oidc is not configured");
+    },
+  });
 
   return app;
 }

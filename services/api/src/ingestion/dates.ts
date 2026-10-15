@@ -16,6 +16,13 @@ export function normalizeDate(raw: string): { value: string; resolved: boolean }
     const iso = `${numeric[3]}-${numeric[2]}-${numeric[1]}`;
     return validIso(iso) ? { value: iso, resolved: true } : { value: text, resolved: false };
   }
+  const shortYear = text.match(/^(\d{2})[/-](\d{2})[/-](\d{2})$/);
+  if (shortYear) {
+    const year = Number(shortYear[3]);
+    const fullYear = year >= 70 ? 1900 + year : 2000 + year;
+    const iso = `${fullYear}-${shortYear[2]}-${shortYear[1]}`;
+    return validIso(iso) ? { value: iso, resolved: true } : { value: text, resolved: false };
+  }
   const named = text.match(/^(\d{2})[/-]([A-Za-z]{3})[/-](\d{4})$/);
   if (named) {
     const month = months[named[2].toLowerCase()];

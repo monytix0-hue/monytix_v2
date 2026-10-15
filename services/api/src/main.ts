@@ -38,6 +38,7 @@ const app = await buildApp({
   manualTransactions: databaseUrl.length > 0 ? createManualTransactionStore(databaseUrl) : null,
   ledger: databaseUrl.length > 0 ? createLedgerRead(databaseUrl) : null,
   imports: databaseUrl.length > 0 ? createImportStore(databaseUrl) : null,
+  databaseUrl,
   objectStorage,
   importScanner: () => pingScanner(scannerHost, scannerPort),
   platformProbe: async () => ({

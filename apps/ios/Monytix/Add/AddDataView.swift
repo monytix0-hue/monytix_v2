@@ -42,6 +42,7 @@ struct AddSheetsView: View {
     @State private var attempt = 0
     @State private var picking = false
     @State private var gmailNote: String?
+    @State private var statementPassword = ""
 
     private var palette: PersonalPalette { colorScheme == .dark ? PersonalTokens.dark : PersonalTokens.light }
 
@@ -77,7 +78,7 @@ struct AddSheetsView: View {
         }
         .task(id: "\(step)-\(attempt)") {
             guard step == .processing, let file = chosen else { return }
-            let outcome = await uploadStatement(file)
+            let outcome = await uploadStatement(file, password: statementPassword)
             status = outcome
             if !outcome.reached {
                 onStep(.offline)
@@ -127,6 +128,9 @@ struct AddSheetsView: View {
                 .overlay(RoundedRectangle(cornerRadius: PersonalRadius.card).stroke(palette.border, lineWidth: 1))
             }
             .buttonStyle(.plain)
+            SecureField("PDF password, if the file has one", text: $statementPassword)
+                .textContentType(.password)
+                .personalText(.primary, size: 15)
             Text("SUPPORTED BANKS").personalText(.primary, size: 13, weight: .extraBold)
             FlowWrap(banks)
             gold("Upload & Process  →", enabled: chosen != nil) { onStep(.processing) }
@@ -210,7 +214,7 @@ struct AddSheetsView: View {
         FlexibleBankRow(names: names, palette: palette)
     }
 
-    private func uploadStatement(_ file: ChosenFile) async -> ImportStatus {
+    private func uploadStatement(_ file: ChosenFile, password: String) async -> ImportStatus {
         let digest = SHA256.hash(data: file.bytes).map { String(format: "%02x", $0) }.joined()
         let payload: [String: Any] = [
             "file_type": file.type,
@@ -241,9 +245,36 @@ struct AddSheetsView: View {
         let completed = await api.submit(method: "POST", path: "/v1/imports/\(importId)/complete", body: nil, idempotencyKey: UUID().uuidString, token: token)
         if completed.status == 0 { return ImportStatus() }
         if !(200..<300).contains(completed.status) { return ImportStatus(reached: true) }
-        let read = await api.submit(method: "GET", path: "/v1/imports/\(importId)/status", body: nil, idempotencyKey: nil, token: token)
-        if read.status == 0 { return ImportStatus() }
-        return readStatus(read.data)
+        let secret = password.trimmingCharacters(in: .whitespacesAndNewlines)
+        var opened = secret.isEmpty
+        var latest = ImportStatus(reached: true)
+        for attempt in 0..<8 {
+            if attempt > 0 {
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+            }
+            let read = await api.submit(method: "GET", path: "/v1/imports/\(importId)/status", body: nil, idempotencyKey: nil, token: token)
+            if read.status == 0 { return ImportStatus() }
+            if !(200..<300).contains(read.status) { return ImportStatus(reached: true) }
+            latest = readStatus(read.data)
+            let failure = extractionFailure(read.data)
+            if !opened && parserEligible(read.data) {
+                guard let body = try? JSONSerialization.data(withJSONObject: ["statement_password": secret]) else {
+                    return ImportStatus(count: latest.count, stage: latest.stage, reached: true)
+                }
+                let open = await api.submit(method: "POST", path: "/v1/imports/\(importId)/open", body: body, idempotencyKey: UUID().uuidString, token: token)
+                if open.status == 409 { continue }
+                if open.status == 422 { return ImportStatus(count: latest.count, stage: "Wrong PDF password", reached: true) }
+                if !(200..<300).contains(open.status) { return ImportStatus(count: latest.count, stage: latest.stage, reached: true) }
+                opened = true
+                continue
+            }
+            if failure == "PASSWORD_REJECTED" && secret.isEmpty {
+                return ImportStatus(count: latest.count, stage: "PDF password required", reached: true)
+            }
+            if !secret.isEmpty && !opened { continue }
+            if latest.done && failure != "PASSWORD_REJECTED" { return latest }
+        }
+        return latest
     }
 }
 
@@ -259,6 +290,18 @@ private func readStatus(_ data: Data?) -> ImportStatus {
     let count = body["imported_transaction_count"].map { "\($0)" }.flatMap { $0 == "nil" || $0.isEmpty ? nil : $0 }
     let stage = (body["stage"] as? String).flatMap { $0.isEmpty ? nil : $0 }
     return ImportStatus(count: count, stage: stage, reached: true, done: true)
+}
+
+private func extractionFailure(_ data: Data?) -> String? {
+    guard let body = jsonObject(data)?["data"] as? [String: Any] else { return nil }
+    if let direct = body["extraction_failure"] as? String, !direct.isEmpty { return direct }
+    let reconciliation = body["reconciliation"] as? [String: Any]
+    return (reconciliation?["extraction_failure"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+}
+
+private func parserEligible(_ data: Data?) -> Bool {
+    let body = jsonObject(data)?["data"] as? [String: Any]
+    return body?["parser_eligible"] as? Bool ?? false
 }
 
 private func readStatement(_ url: URL) -> ChosenFile? {

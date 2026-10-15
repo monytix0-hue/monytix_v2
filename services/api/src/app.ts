@@ -36,6 +36,7 @@ export type BuildOptions = {
   imports?: ImportStore | null;
   objectStorage?: ObjectStorage | null;
   importScanner?: () => Promise<void>;
+  databaseUrl?: string;
   gmail?: GmailWebhookOptions;
   gmailConnect?: GmailConnectOptions;
   platformProbe?: PlatformProbe;
@@ -57,6 +58,7 @@ export const redactedPaths = [
   "*.merchantDescription",
   "*.url",
   "*.password",
+  "*.statement_password",
   "*.secret",
   "*.secretAccessKey",
   "*.accessKeyId",
@@ -163,7 +165,12 @@ export async function buildApp(options: BuildOptions = {}): Promise<FastifyInsta
   await app.register(transactionsRoutes, { manual: manualTransactions });
   await app.register(ledgerRoutes, { ledger });
   await app.register(liveRoutes, { ledger });
-  await app.register(importRoutes, { imports, storage: objectStorage, scanner: options.importScanner });
+  await app.register(importRoutes, {
+    imports,
+    storage: objectStorage,
+    scanner: options.importScanner,
+    databaseUrl: options.databaseUrl,
+  });
   await app.register(sourcesRoutes);
   await app.register(statementsRoutes);
   await app.register(personalRoutes);

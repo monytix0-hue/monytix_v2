@@ -6,7 +6,7 @@ import { readStatementCsv } from "../src/ingestion/csv.js";
 import { detectFileType } from "../src/ingestion/detect.js";
 import { ExtractionFailure } from "../src/ingestion/failure.js";
 import { gmailMailboxParsing } from "../src/ingestion/gmail.js";
-import { extractPdf } from "../src/ingestion/pdf.js";
+import { extractPdf, rowsFromTextItems } from "../src/ingestion/pdf.js";
 import { readExcel } from "../src/ingestion/excel.js";
 import { combineParsedRow, extractStatementRows } from "../src/ingestion/statement.js";
 
@@ -68,6 +68,36 @@ test("a text PDF keeps page order and a textless PDF is not parsed", async () =>
   assert.equal(rows[0]?.evidence.balance, "500.00");
   const textless = Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n");
   await assert.rejects(() => extractPdf(textless), (error: unknown) => error instanceof ExtractionFailure && error.code === "SCANNED_DOCUMENT_OCR_NOT_PERMITTED");
+});
+
+test("withdrawal and deposit columns keep direction for a two-digit statement date", () => {
+  const rows = rowsFromTextItems([
+    { str: "Date", x: 40, y: 700 },
+    { str: "Narration", x: 144, y: 700 },
+    { str: "Value Dt", x: 362, y: 700 },
+    { str: "Withdrawal Amt.", x: 405, y: 700 },
+    { str: "Deposit Amt.", x: 491, y: 700 },
+    { str: "Closing Balance", x: 564, y: 700 },
+    { str: "01/04/26", x: 40, y: 680 },
+    { str: "UPI RENT", x: 144, y: 680 },
+    { str: "02/04/26", x: 362, y: 680 },
+    { str: "1,250.00", x: 440, y: 680 },
+    { str: "9,000.00", x: 600, y: 680 },
+    { str: "02/04/26", x: 40, y: 660 },
+    { str: "SALARY", x: 144, y: 660 },
+    { str: "2,500.00", x: 520, y: 660 },
+    { str: "11,500.00", x: 600, y: 660 },
+  ]);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0]?.txn_date, "2026-04-01");
+  assert.equal(rows[0]?.direction, "OUT");
+  assert.equal(rows[0]?.amount, "1250.00");
+  assert.equal(rows[0]?.description, "UPI RENT");
+  assert.equal(rows[0]?.evidence.balance, "9,000.00");
+  assert.equal(rows[1]?.txn_date, "2026-04-02");
+  assert.equal(rows[1]?.direction, "IN");
+  assert.equal(rows[1]?.amount, "2500.00");
+  assert.equal(rows[1]?.evidence.reading_order, 2);
 });
 
 test("an encrypted PDF rejects a missing or wrong password without keeping it", async () => {

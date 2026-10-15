@@ -28,7 +28,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -49,6 +51,7 @@ import com.monytix.app.auth.MonytixApi
 import com.monytix.app.theme.LocalPersonalTheme
 import com.monytix.app.theme.PersonalRadius
 import com.monytix.app.theme.PersonalSpace
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.security.MessageDigest
@@ -91,6 +94,7 @@ fun AddSheets(
     val theme = LocalPersonalTheme.current
     val context = LocalContext.current
     var chosen by remember { mutableStateOf<ChosenFile?>(null) }
+    var statementPassword by remember { mutableStateOf("") }
     var status by remember { mutableStateOf(ImportStatus(null, null, false, false)) }
     var attempt by remember { mutableIntStateOf(0) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -101,7 +105,7 @@ fun AddSheets(
     LaunchedEffect(step, attempt) {
         val file = chosen
         if (step != AddStep.Processing || file == null) return@LaunchedEffect
-        val outcome = uploadStatement(api, token, file)
+        val outcome = uploadStatement(api, token, file, statementPassword)
         status = outcome
         if (!outcome.reached) onStep(AddStep.Offline) else if (outcome.done) onStep(AddStep.Success)
     }
@@ -137,6 +141,8 @@ fun AddSheets(
                 )
                 AddStep.Upload -> UploadBody(
                     chosen = chosen,
+                    password = statementPassword,
+                    onPassword = { statementPassword = it },
                     onPick = { picker.launch(arrayOf("application/pdf", "text/csv", "text/comma-separated-values")) },
                     onUpload = { if (chosen != null) onStep(AddStep.Processing) },
                 )
@@ -203,7 +209,7 @@ private fun SourceRow(title: String, line: String, onClick: (() -> Unit)?) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun UploadBody(chosen: ChosenFile?, onPick: () -> Unit, onUpload: () -> Unit) {
+private fun UploadBody(chosen: ChosenFile?, password: String, onPassword: (String) -> Unit, onPick: () -> Unit, onUpload: () -> Unit) {
     val theme = LocalPersonalTheme.current
     Column(
         Modifier
@@ -218,6 +224,14 @@ private fun UploadBody(chosen: ChosenFile?, onPick: () -> Unit, onUpload: () -> 
         Text(chosen?.name ?: "Drag or tap to select your PDF/csv statement", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
         Text("(Max 10MB, password-protected supported)", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
     }
+    OutlinedTextField(
+        value = password,
+        onValueChange = onPassword,
+        label = { Text("PDF password, if the file has one") },
+        visualTransformation = PasswordVisualTransformation(),
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
     Text("SUPPORTED BANKS", color = eyebrow(), fontFamily = theme.fontFamily, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
     FlowRow(horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s8), verticalArrangement = Arrangement.spacedBy(PersonalSpace.s8)) {
         banks.forEach { name ->
@@ -266,7 +280,7 @@ private fun OfflineBody(onRetry: () -> Unit, onOffline: () -> Unit) {
     Outlined("Use Offline Mode", onOffline)
 }
 
-private suspend fun uploadStatement(api: MonytixApi, token: suspend (Boolean) -> String?, file: ChosenFile): ImportStatus {
+private suspend fun uploadStatement(api: MonytixApi, token: suspend (Boolean) -> String?, file: ChosenFile, statementPassword: String): ImportStatus {
     val digest = sha256(file.bytes)
     val created = api.submit(
         "POST",
@@ -293,9 +307,38 @@ private suspend fun uploadStatement(api: MonytixApi, token: suspend (Boolean) ->
     val completed = api.submit("POST", "/v1/imports/$importId/complete", null, UUID.randomUUID().toString(), token)
     if (completed.status == 0) return ImportStatus(null, null, false, false)
     if (completed.status !in 200..299) return ImportStatus(null, null, true, false)
-    val status = api.submit("GET", "/v1/imports/$importId/status", null, null, token)
-    if (status.status == 0) return ImportStatus(null, null, false, false)
-    return readStatus(status.text)
+    val password = statementPassword.trim()
+    var opened = password.isEmpty()
+    var latest = ImportStatus(null, null, true, false)
+    repeat(8) { attempt ->
+        if (attempt > 0) delay(3_000)
+        val status = api.submit("GET", "/v1/imports/$importId/status", null, null, token)
+        if (status.status == 0) return ImportStatus(null, null, false, false)
+        if (status.status !in 200..299) return ImportStatus(null, null, true, false)
+        latest = readStatus(status.text)
+        val failure = extractionFailure(status.text)
+        val eligible = parserEligible(status.text)
+        if (!opened && eligible) {
+            val open = api.submit(
+                "POST",
+                "/v1/imports/$importId/open",
+                """{"statement_password":${JSONObject.quote(password)}}""",
+                UUID.randomUUID().toString(),
+                token,
+            )
+            if (open.status == 409) return@repeat
+            if (open.status == 422) return ImportStatus(latest.count, "Wrong PDF password", true, false)
+            if (open.status !in 200..299) return ImportStatus(latest.count, latest.stage, true, false)
+            opened = true
+            return@repeat
+        }
+        if (failure == "PASSWORD_REJECTED" && password.isEmpty()) {
+            return ImportStatus(latest.count, "PDF password required", true, false)
+        }
+        if (password.isNotEmpty() && !opened) return@repeat
+        if (latest.done && failure != "PASSWORD_REJECTED") return latest
+    }
+    return latest
 }
 
 private fun readStatus(json: String?): ImportStatus {
@@ -308,6 +351,17 @@ private fun readStatus(json: String?): ImportStatus {
     } catch (_: Exception) {
         ImportStatus(null, null, true, true)
     }
+}
+
+private fun extractionFailure(json: String?): String? {
+    val data = runCatching { JSONObject(json ?: return null).optJSONObject("data") }.getOrNull() ?: return null
+    val direct = data.optString("extraction_failure")
+    if (direct.isNotBlank() && direct != "null") return direct
+    return data.optJSONObject("reconciliation")?.optString("extraction_failure")?.takeIf { it.isNotBlank() && it != "null" }
+}
+
+private fun parserEligible(json: String?): Boolean {
+    return runCatching { JSONObject(json ?: return false).optJSONObject("data")?.optBoolean("parser_eligible", false) == true }.getOrDefault(false)
 }
 
 private fun readStatement(context: android.content.Context, uri: Uri): ChosenFile? {

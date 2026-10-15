@@ -105,3 +105,90 @@ export async function runExtractOnce(
     await client.end();
   }
 }
+
+export type StatementOpenTarget = {
+  sourceDocumentId: string;
+  objectKey: string;
+  sha256: string;
+  fileType: string;
+};
+
+export async function openStatementWithPassword(
+  databaseUrl: string,
+  storage: ObjectStorage,
+  target: StatementOpenTarget,
+  statementPassword: string,
+): Promise<"opened" | "replay" | "password_rejected" | "failed"> {
+  const client = new pg.Client({ connectionString: databaseUrl });
+  await client.connect();
+  try {
+    await client.query("SELECT ops.discard_password_rejected_extraction($1::uuid)", [target.sourceDocumentId]);
+    const object = await storage.readObject(target.objectKey);
+    if (!object) {
+      return "failed";
+    }
+    const actualHash = sha256Hex(object.body);
+    if (actualHash !== target.sha256) {
+      await client.query("SELECT ops.save_statement_extraction($1::uuid, $2, '[]'::jsonb, 'OBJECT_TAMPERED', NULL)", [
+        target.sourceDocumentId,
+        actualHash,
+      ]);
+      return "failed";
+    }
+    let rows: StatementRow[];
+    try {
+      rows = await extractStatementRows(target.fileType, object.body, statementPassword);
+    } catch (error) {
+      if (error instanceof ExtractionFailure && error.code === "PASSWORD_REJECTED") {
+        await client.query("SELECT ops.save_statement_extraction($1::uuid, $2, '[]'::jsonb, 'PASSWORD_REJECTED', NULL)", [
+          target.sourceDocumentId,
+          actualHash,
+        ]);
+        return "password_rejected";
+      }
+      const code = error instanceof ExtractionFailure
+        ? error.code
+        : error instanceof Error && error.message === "invalid statement structure"
+          ? "INVALID_STRUCTURE"
+          : null;
+      if (!code) {
+        throw error;
+      }
+      await client.query("SELECT ops.save_statement_extraction($1::uuid, $2, '[]'::jsonb, $3, NULL)", [
+        target.sourceDocumentId,
+        actualHash,
+        code,
+      ]);
+      return "failed";
+    }
+    const parsed = [];
+    for (const row of rows) {
+      const result = await client.query<{ parsed: Record<string, unknown> }>(
+        "SELECT spendsense.parse_narration_v4($1, $2) AS parsed",
+        [row.description, row.direction],
+      );
+      parsed.push(combineParsedRow(result.rows[0].parsed, row));
+    }
+    const saved = await client.query<{ result: { outcome: string; extraction_run_id?: string; status?: string } }>(
+      "SELECT ops.save_statement_extraction($1::uuid, $2, $3::jsonb, NULL, NULL) AS result",
+      [target.sourceDocumentId, actualHash, JSON.stringify(parsed)],
+    );
+    const extraction = saved.rows[0]?.result;
+    if (extraction?.outcome === "created" && extraction.status !== "FAILED" && extraction.extraction_run_id) {
+      await client.query("SELECT ops.map_statement_extraction($1::uuid)", [extraction.extraction_run_id]);
+      await client.query("SELECT ops.publish_structure_extraction_run($1::uuid)", [extraction.extraction_run_id]);
+      await client.query("SELECT ops.interpret_extraction_run($1::uuid)", [extraction.extraction_run_id]);
+      await client.query("SELECT ops.resolve_extraction_run($1::uuid)", [extraction.extraction_run_id]);
+      await client.query("SELECT ops.resolve_party_extraction_run($1::uuid)", [extraction.extraction_run_id]);
+    } else if (extraction?.outcome === "replay" && extraction.extraction_run_id) {
+      await client.query("SELECT ops.publish_structure_extraction_run($1::uuid)", [extraction.extraction_run_id]);
+      await client.query("SELECT ops.interpret_extraction_run($1::uuid)", [extraction.extraction_run_id]);
+      await client.query("SELECT ops.resolve_extraction_run($1::uuid)", [extraction.extraction_run_id]);
+      await client.query("SELECT ops.resolve_party_extraction_run($1::uuid)", [extraction.extraction_run_id]);
+      return "replay";
+    }
+    return extraction?.status === "FAILED" ? "failed" : "opened";
+  } finally {
+    await client.end();
+  }
+}

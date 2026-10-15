@@ -8,6 +8,7 @@ export type ImportStore = {
   complete(input: CompleteInput): Promise<ImportResult>;
   fail(input: { actorId: string; ownerId: string; importId: string; reason: string }): Promise<void>;
   status(input: { actorId: string; ownerId: string; importId: string }): Promise<ImportResult>;
+  openTarget(input: { actorId: string; ownerId: string; importId: string }): Promise<StatementOpenTargetResult>;
   reviewQueue(input: { actorId: string; ownerId: string; importId: string; sourceRecordId: string | null }): Promise<ImportResult>;
   resolveReview(input: ReviewInput): Promise<ImportResult>;
   finalize(input: { actorId: string; ownerId: string; importId: string; idempotencyKey: string }): Promise<ImportResult>;
@@ -123,6 +124,23 @@ export function createImportStore(databaseUrl: string): ImportStore {
       }
       return status;
     },
+    async openTarget(input) {
+      const result = await pool.query<{ result: Record<string, unknown> }>(
+        `SELECT ops.statement_open_target($1::uuid,$2::uuid,$3::uuid) AS result`,
+        [input.actorId, input.ownerId, input.importId],
+      );
+      const row = result.rows[0]?.result;
+      if (!row || typeof row.outcome !== "string") {
+        return { outcome: "forbidden", sourceDocumentId: null, objectKey: null, sha256: null, fileType: null };
+      }
+      return {
+        outcome: typeof row.outcome === "string" ? row.outcome : "forbidden",
+        sourceDocumentId: typeof row.source_document_id === "string" ? row.source_document_id : null,
+        objectKey: typeof row.object_key === "string" ? row.object_key : null,
+        sha256: typeof row.sha256 === "string" ? row.sha256 : null,
+        fileType: typeof row.file_type === "string" ? row.file_type : null,
+      };
+    },
     async reviewQueue(input) {
       const result = await pool.query<{ result: ImportResult & { items?: unknown } }>(
         `SELECT ops.statement_review_queue($1::uuid,$2::uuid,$3::uuid,$4::uuid) AS result`,
@@ -167,6 +185,14 @@ export function createImportStore(databaseUrl: string): ImportStore {
     },
   };
 }
+
+export type StatementOpenTargetResult = {
+  outcome: string;
+  sourceDocumentId: string | null;
+  objectKey: string | null;
+  sha256: string | null;
+  fileType: string | null;
+};
 
 export function extractionFailureFields(reconciliation: Record<string, unknown>): Record<string, unknown> {
   const runStatus = typeof reconciliation.extraction_status === "string" ? reconciliation.extraction_status : null;

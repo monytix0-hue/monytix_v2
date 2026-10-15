@@ -1,4 +1,5 @@
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
+import { openStatementWithPassword } from "./extract.js";
 import { signatureMatches } from "./signatures.js";
 import { sha256Hex, type ObjectStorage } from "./storage.js";
 import { createImportStore, finalObjectKey, type ImportStore } from "./store.js";
@@ -6,8 +7,24 @@ import { createImportStore, finalObjectKey, type ImportStore } from "./store.js"
 export type ImportRouteOptions = {
   imports: ImportStore | null;
   storage: ObjectStorage | null;
+  databaseUrl?: string;
   scanner?: () => Promise<void>;
 };
+
+export function statementPasswordFromBody(body: unknown): string | null {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return null;
+  }
+  const value = (body as Record<string, unknown>).statement_password;
+  if (typeof value !== "string") {
+    return null;
+  }
+  const password = value.trim();
+  if (password.length === 0 || password.length > 128) {
+    return null;
+  }
+  return password;
+}
 
 const fileTypes = new Set(["PDF", "XLS", "XLSX", "CSV"]);
 const sha256Text = /^[0-9a-f]{64}$/;
@@ -16,6 +33,7 @@ const maxBytes = 10_485_760;
 export const importRoutes: FastifyPluginAsync<ImportRouteOptions> = async (app, options) => {
   const imports = options.imports;
   const storage = options.storage;
+  const databaseUrl = options.databaseUrl?.trim() ?? "";
   const scanner = options.scanner;
 
   app.post("/v1/imports", async (request, reply) => {
@@ -95,6 +113,45 @@ export const importRoutes: FastifyPluginAsync<ImportRouteOptions> = async (app, 
 
   app.post("/v1/imports/:importId/complete", async (request, reply) => {
     return completeImport(request, reply, imports, storage, scanner);
+  });
+
+  app.post("/v1/imports/:importId/open", async (request, reply) => {
+    if (!request.actorId) {
+      return reply.status(401).send({ error: "unauthorized" });
+    }
+    if (!request.ownerId) {
+      return reply.status(403).send({ error: "owner_forbidden" });
+    }
+    const password = statementPasswordFromBody(request.body);
+    if (!password) {
+      return reply.status(422).send({ error: "invalid_request" });
+    }
+    if (!imports || !storage || !databaseUrl) {
+      return reply.status(503).send({ error: "unavailable" });
+    }
+    const importId = (request.params as { importId: string }).importId;
+    try {
+      const target = await imports.openTarget({ actorId: request.actorId, ownerId: request.ownerId, importId });
+      if (target.outcome === "ineligible") {
+        return reply.status(409).send({ error: "not_ready" });
+      }
+      if (target.outcome !== "ok" || !target.sourceDocumentId || !target.objectKey || !target.sha256 || !target.fileType) {
+        return reply.status(403).send({ error: "owner_forbidden" });
+      }
+      const opened = await openStatementWithPassword(databaseUrl, storage, {
+        sourceDocumentId: target.sourceDocumentId,
+        objectKey: target.objectKey,
+        sha256: target.sha256,
+        fileType: target.fileType,
+      }, password);
+      if (opened === "password_rejected") {
+        return reply.status(422).send({ error: "password_rejected" });
+      }
+      return reply.status(200).send({ data: { outcome: opened } });
+    } catch (error) {
+      logImportFailure(request, error);
+      return reply.status(503).send({ error: "unavailable" });
+    }
   });
 
   app.get("/v1/imports/:importId/status", async (request, reply) => {

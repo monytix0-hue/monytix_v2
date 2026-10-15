@@ -116,6 +116,7 @@ export function createImportStore(databaseUrl: string): ImportStore {
           data: {
             ...data,
             imported_transaction_count: reconciliation.mapped_count,
+            ...extractionFailureFields(reconciliation),
             reconciliation,
           },
         };
@@ -165,6 +166,20 @@ export function createImportStore(databaseUrl: string): ImportStore {
       await pool.end();
     },
   };
+}
+
+export function extractionFailureFields(reconciliation: Record<string, unknown>): Record<string, unknown> {
+  const runStatus = typeof reconciliation.extraction_status === "string" ? reconciliation.extraction_status : null;
+  const stored = typeof reconciliation.extraction_failure === "string" ? reconciliation.extraction_failure.trim() : "";
+  const failure = runStatus === "FAILED" ? (stored || "NO_ROWS") : (stored || null);
+  const fields: Record<string, unknown> = {
+    extraction_status: runStatus,
+    extraction_failure: failure,
+  };
+  if (runStatus === "FAILED") {
+    fields.stage = failure === "NO_ROWS" ? "FAILED no rows" : `FAILED ${failure}`;
+  }
+  return fields;
 }
 
 export function finalObjectKey(ownerId: string, importId: string): string {

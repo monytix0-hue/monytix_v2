@@ -64,6 +64,7 @@ for file in $(find /database/migrations -maxdepth 1 -type f -name '*.sql' | sort
     0023_gmail_ingest.sql) code="GMAIL-INGEST-FOUNDATION" ;;
     0024_personal_owner.sql) code="PERSONAL-OWNER" ;;
     0025_gmail_oauth.sql) code="GMAIL-OAUTH-CONNECT" ;;
+    0026_extraction_failure.sql) code="EXTRACTION-FAILURE" ;;
     *) code="" ;;
   esac
 

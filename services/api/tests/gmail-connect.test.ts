@@ -59,8 +59,9 @@ test("gmail connect returns an authorize url and stores a sealed credential", as
     method: "GET",
     url: `/gmail/oauth/callback?code=auth-code&state=${encodeURIComponent(state)}`,
   });
-  assert.equal(callback.statusCode, 200);
-  assert.equal(callback.body.includes(refreshToken), false);
+  assert.equal(callback.statusCode, 302);
+  assert.equal(callback.headers.location, "monytix://gmail/connected");
+  assert.equal(String(callback.headers.location).includes(refreshToken), false);
   assert.equal(store.saved.length, 1);
   assert.equal(store.saved[0]?.mailbox, "owner@example.com");
   assert.match(store.saved[0]?.credentialRef ?? "", /^gmail-oauth:/);
@@ -69,7 +70,18 @@ test("gmail connect returns an authorize url and stores a sealed credential", as
     method: "GET",
     url: `/gmail/oauth/callback?code=auth-code&state=${encodeURIComponent(state)}`,
   });
-  assert.equal(reused.statusCode, 400);
+  assert.equal(reused.statusCode, 302);
+  assert.match(String(reused.headers.location), /error=state/);
   assert.equal(exchanges, 1);
+  const posted = await app.inject({
+    method: "POST",
+    url: "/v1/gmail/connect",
+    headers: { authorization: `Bearer ${signed.token}` },
+    payload: {},
+  });
+  assert.equal(posted.statusCode, 200);
+  const postedUrl = new URL(posted.json().authorization_url as string);
+  assert.equal(postedUrl.searchParams.get("client_id"), "client-id");
+  assert.equal(postedUrl.toString().includes("client-secret"), false);
   await app.close();
 });

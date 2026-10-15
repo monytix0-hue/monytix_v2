@@ -71,7 +71,7 @@ struct AddSheetsView: View {
             .clipShape(UnevenRoundedRectangle(cornerRadii: .init(topLeading: 28, topTrailing: 28), style: .continuous))
             .frame(maxHeight: UIScreen.main.bounds.height * 0.92)
         }
-        .fileImporter(isPresented: $picking, allowedContentTypes: [.pdf, .commaSeparatedText]) { result in
+        .fileImporter(isPresented: $picking, allowedContentTypes: statementTypes) { result in
             if case .success(let url) = result {
                 chosen = readStatement(url)
             }
@@ -238,7 +238,7 @@ struct AddSheetsView: View {
         if let raw = upload["headers"] as? [String: Any] {
             raw.forEach { key, value in headers[key] = "\(value)" }
         }
-        let mime = (data["declared_mime_type"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? (file.type == "PDF" ? "application/pdf" : "text/csv")
+        let mime = (data["declared_mime_type"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? mimeType(file.type)
         let put = await api.putSigned(url: url, headers: headers, bytes: file.bytes, contentType: mime)
         if put == 0 { return ImportStatus() }
         if !(200..<300).contains(put) { return ImportStatus(reached: true) }
@@ -304,11 +304,36 @@ private func parserEligible(_ data: Data?) -> Bool {
     return body?["parser_eligible"] as? Bool ?? false
 }
 
+private let statementTypes: [UTType] = [
+    .pdf,
+    .commaSeparatedText,
+    UTType(filenameExtension: "xlsx") ?? .data,
+    UTType(filenameExtension: "xls") ?? .data,
+]
+
+private func statementType(_ name: String) -> String {
+    let lower = name.lowercased()
+    if lower.hasSuffix(".pdf") { return "PDF" }
+    if lower.hasSuffix(".csv") { return "CSV" }
+    if lower.hasSuffix(".xlsx") { return "XLSX" }
+    if lower.hasSuffix(".xls") { return "XLS" }
+    return ""
+}
+
+private func mimeType(_ type: String) -> String {
+    switch type {
+    case "PDF": return "application/pdf"
+    case "XLSX": return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    case "XLS": return "application/vnd.ms-excel"
+    default: return "text/csv"
+    }
+}
+
 private func readStatement(_ url: URL) -> ChosenFile? {
     let accessed = url.startAccessingSecurityScopedResource()
     defer { if accessed { url.stopAccessingSecurityScopedResource() } }
     let name = url.lastPathComponent
-    let type = name.lowercased().hasSuffix(".pdf") ? "PDF" : (name.lowercased().hasSuffix(".csv") ? "CSV" : "")
+    let type = statementType(name)
     guard !type.isEmpty, let bytes = try? Data(contentsOf: url), !bytes.isEmpty, bytes.count <= maxBytes else { return nil }
     return ChosenFile(name: String(name.prefix(255)), type: type, bytes: bytes)
 }

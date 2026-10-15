@@ -80,16 +80,9 @@ export async function runExtractOnce(
       );
       const extraction = saved.rows[0]?.result;
       if (extraction?.outcome === "created" && extraction.status !== "FAILED" && extraction.extraction_run_id) {
-        await client.query("SELECT ops.map_statement_extraction($1::uuid)", [extraction.extraction_run_id]);
-        await client.query("SELECT ops.publish_structure_extraction_run($1::uuid)", [extraction.extraction_run_id]);
-        await client.query("SELECT ops.interpret_extraction_run($1::uuid)", [extraction.extraction_run_id]);
-        await client.query("SELECT ops.resolve_extraction_run($1::uuid)", [extraction.extraction_run_id]);
-        await client.query("SELECT ops.resolve_party_extraction_run($1::uuid)", [extraction.extraction_run_id]);
+        await mapBoundExtraction(client, job.payload.source_document_id, extraction.extraction_run_id);
       } else if (extraction?.outcome === "replay" && extraction.extraction_run_id) {
-        await client.query("SELECT ops.publish_structure_extraction_run($1::uuid)", [extraction.extraction_run_id]);
-        await client.query("SELECT ops.interpret_extraction_run($1::uuid)", [extraction.extraction_run_id]);
-        await client.query("SELECT ops.resolve_extraction_run($1::uuid)", [extraction.extraction_run_id]);
-        await client.query("SELECT ops.resolve_party_extraction_run($1::uuid)", [extraction.extraction_run_id]);
+        await mapBoundExtraction(client, job.payload.source_document_id, extraction.extraction_run_id);
       }
       await client.query("SELECT ops.finish_statement_extraction($1::uuid, true, NULL)", [job.outbox_event_id]);
       return true;
@@ -104,6 +97,15 @@ export async function runExtractOnce(
   } finally {
     await client.end();
   }
+}
+
+async function mapBoundExtraction(client: pg.Client, documentId: string, extractionRunId: string): Promise<void> {
+  await client.query("SELECT ops.bind_statement_for_mapping($1::uuid)", [documentId]);
+  await client.query("SELECT ops.map_statement_extraction($1::uuid)", [extractionRunId]);
+  await client.query("SELECT ops.publish_structure_extraction_run($1::uuid)", [extractionRunId]);
+  await client.query("SELECT ops.interpret_extraction_run($1::uuid)", [extractionRunId]);
+  await client.query("SELECT ops.resolve_extraction_run($1::uuid)", [extractionRunId]);
+  await client.query("SELECT ops.resolve_party_extraction_run($1::uuid)", [extractionRunId]);
 }
 
 export type StatementOpenTarget = {
@@ -174,18 +176,11 @@ export async function openStatementWithPassword(
       [target.sourceDocumentId, actualHash, JSON.stringify(parsed)],
     );
     const extraction = saved.rows[0]?.result;
-    if (extraction?.outcome === "created" && extraction.status !== "FAILED" && extraction.extraction_run_id) {
-      await client.query("SELECT ops.map_statement_extraction($1::uuid)", [extraction.extraction_run_id]);
-      await client.query("SELECT ops.publish_structure_extraction_run($1::uuid)", [extraction.extraction_run_id]);
-      await client.query("SELECT ops.interpret_extraction_run($1::uuid)", [extraction.extraction_run_id]);
-      await client.query("SELECT ops.resolve_extraction_run($1::uuid)", [extraction.extraction_run_id]);
-      await client.query("SELECT ops.resolve_party_extraction_run($1::uuid)", [extraction.extraction_run_id]);
-    } else if (extraction?.outcome === "replay" && extraction.extraction_run_id) {
-      await client.query("SELECT ops.publish_structure_extraction_run($1::uuid)", [extraction.extraction_run_id]);
-      await client.query("SELECT ops.interpret_extraction_run($1::uuid)", [extraction.extraction_run_id]);
-      await client.query("SELECT ops.resolve_extraction_run($1::uuid)", [extraction.extraction_run_id]);
-      await client.query("SELECT ops.resolve_party_extraction_run($1::uuid)", [extraction.extraction_run_id]);
-      return "replay";
+    if (extraction?.extraction_run_id && (extraction.outcome === "replay" || (extraction.outcome === "created" && extraction.status !== "FAILED"))) {
+      await mapBoundExtraction(client, target.sourceDocumentId, extraction.extraction_run_id);
+      if (extraction.outcome === "replay") {
+        return "replay";
+      }
     }
     return extraction?.status === "FAILED" ? "failed" : "opened";
   } finally {

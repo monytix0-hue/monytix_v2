@@ -6,6 +6,7 @@ import { sealCredential } from "./secret.js";
 const authorizeEndpoint = "https://accounts.google.com/o/oauth2/v2/auth";
 const defaultTokenUri = "https://oauth2.googleapis.com/token";
 const scope = "openid email https://www.googleapis.com/auth/gmail.readonly";
+const appReturn = "monytix://gmail/connected";
 
 export type GmailCodeExchange = (input: {
   code: string;
@@ -36,9 +37,20 @@ export const gmailConnectRoutes: FastifyPluginAsync<GmailConnectOptions> = async
     if (!ready(options)) {
       return reply.status(503).send({ error: "unavailable" });
     }
-    const state = randomBytes(32).toString("base64url");
-    await options.store!.issueState(request.ownerId, state, new Date(Date.now() + 10 * 60 * 1000));
-    return reply.send({ url: authorizeUrl(options, state) });
+    return reply.send({ url: await issueAuthorizeUrl(options, request.ownerId) });
+  });
+
+  app.post("/v1/gmail/connect", async (request, reply) => {
+    if (!request.actorId) {
+      return reply.status(401).send({ error: "unauthorized" });
+    }
+    if (!request.ownerId) {
+      return reply.status(403).send({ error: "owner_forbidden" });
+    }
+    if (!ready(options)) {
+      return reply.status(503).send({ error: "unavailable" });
+    }
+    return reply.send({ authorization_url: await issueAuthorizeUrl(options, request.ownerId) });
   });
 
   app.get("/gmail/oauth/callback", async (request, reply) => {
@@ -46,11 +58,11 @@ export const gmailConnectRoutes: FastifyPluginAsync<GmailConnectOptions> = async
     const code = typeof query.code === "string" ? query.code : "";
     const state = typeof query.state === "string" ? query.state : "";
     if (!code || !state || !ready(options)) {
-      return reply.type("text/html").status(400).send(page("Gmail could not be connected."));
+      return returnToApp(reply, "unavailable");
     }
     const ownerId = await options.store!.consumeState(state);
     if (!ownerId) {
-      return reply.type("text/html").status(400).send(page("Gmail could not be connected."));
+      return returnToApp(reply, "state");
     }
     try {
       const exchanged = await (options.exchange ?? exchangeGoogleCode)({
@@ -68,11 +80,22 @@ export const gmailConnectRoutes: FastifyPluginAsync<GmailConnectOptions> = async
         ciphertext,
       });
     } catch {
-      return reply.type("text/html").status(400).send(page("Gmail could not be connected."));
+      return returnToApp(reply, "exchange");
     }
-    return reply.type("text/html").send(page("Gmail is connected. Return to Monytix."));
+    return returnToApp(reply);
   });
-};
+}
+
+async function issueAuthorizeUrl(options: GmailConnectOptions, ownerId: string): Promise<string> {
+  const state = randomBytes(32).toString("base64url");
+  await options.store!.issueState(ownerId, state, new Date(Date.now() + 10 * 60 * 1000));
+  return authorizeUrl(options, state);
+}
+
+function returnToApp(reply: { redirect: (url: string) => unknown }, error?: string) {
+  const target = error ? `${appReturn}?error=${encodeURIComponent(error)}` : appReturn;
+  return reply.redirect(target);
+}
 
 function ready(options: GmailConnectOptions): boolean {
   return Boolean(
@@ -139,6 +162,3 @@ function emailFromIdToken(token: string): string {
   }
 }
 
-function page(message: string): string {
-  return `<!doctype html><title>Monytix</title><p>${message}</p>`;
-}

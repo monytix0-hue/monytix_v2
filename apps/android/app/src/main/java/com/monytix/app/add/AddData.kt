@@ -143,7 +143,15 @@ fun AddSheets(
                     chosen = chosen,
                     password = statementPassword,
                     onPassword = { statementPassword = it },
-                    onPick = { picker.launch(arrayOf("application/pdf", "text/csv", "text/comma-separated-values")) },
+                    onPick = {
+                        picker.launch(arrayOf(
+                            "application/pdf",
+                            "text/csv",
+                            "text/comma-separated-values",
+                            "application/vnd.ms-excel",
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        ))
+                    },
                     onUpload = { if (chosen != null) onStep(AddStep.Processing) },
                 )
                 AddStep.Processing -> ProcessingBody(status)
@@ -300,7 +308,7 @@ private suspend fun uploadStatement(api: MonytixApi, token: suspend (Boolean) ->
     val headers = mutableMapOf<String, String>()
     val headerObject = upload?.optJSONObject("headers")
     headerObject?.keys()?.forEach { key -> headers[key] = headerObject.optString(key) }
-    val mime = data.optString("declared_mime_type").ifBlank { if (file.type == "PDF") "application/pdf" else "text/csv" }
+    val mime = data.optString("declared_mime_type").ifBlank { mimeType(file.type) }
     val put = api.putSigned(url, headers, file.bytes, mime)
     if (put == 0) return ImportStatus(null, null, false, false)
     if (put !in 200..299) return ImportStatus(null, null, true, false)
@@ -372,11 +380,20 @@ private fun readStatement(context: android.content.Context, uri: Uri): ChosenFil
     val type = when {
         name.endsWith(".pdf", true) -> "PDF"
         name.endsWith(".csv", true) -> "CSV"
+        name.endsWith(".xlsx", true) -> "XLSX"
+        name.endsWith(".xls", true) -> "XLS"
         else -> return null
     }
     val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
     if (bytes.isEmpty() || bytes.size > MaxBytes) return null
     return ChosenFile(name.take(255), type, bytes)
+}
+
+private fun mimeType(type: String): String = when (type) {
+    "PDF" -> "application/pdf"
+    "XLSX" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    "XLS" -> "application/vnd.ms-excel"
+    else -> "text/csv"
 }
 
 private fun sha256(bytes: ByteArray): String {

@@ -16,8 +16,8 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.monytix.app.auth.LoginScreen
 import com.monytix.app.auth.MonytixApi
 import com.monytix.app.auth.createAuthSession
+import com.monytix.app.shell.BusinessShell
 import com.monytix.app.splash.MonytixSplash
-import com.monytix.app.theme.BusinessKitScreen
 import com.monytix.app.theme.BusinessTheme
 import kotlinx.coroutines.launch
 
@@ -62,7 +62,9 @@ private fun SessionGate() {
     val scope = rememberCoroutineScope()
     var signedIn by remember { mutableStateOf(session.currentEmail() != null) }
     if (signedIn) {
-        BusinessKitScreen(
+        BusinessShell(
+            api = api,
+            token = session::idToken,
             onSignOut = {
                 scope.launch {
                     api.cancelPending()

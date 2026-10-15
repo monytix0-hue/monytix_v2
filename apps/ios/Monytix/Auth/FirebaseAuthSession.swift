@@ -32,6 +32,10 @@ final class FirebaseAuthSession: NSObject, AuthSession {
 
     func signInWithGoogle() async -> AuthResult {
         #if canImport(GoogleSignIn)
+        guard let clientID = FirebaseApp.app()?.options.clientID else {
+            return .failed("Google sign-in is unavailable.")
+        }
+        GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: clientID)
         guard let controller = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene })
             .flatMap(\.windows)
@@ -64,7 +68,7 @@ final class FirebaseAuthSession: NSObject, AuthSession {
                 throw AuthFlowError.cancelled
             }
             let firebaseCredential = OAuthProvider.credential(
-                withProviderID: "apple.com",
+                providerID: .apple,
                 idToken: idToken,
                 rawNonce: rawNonce
             )

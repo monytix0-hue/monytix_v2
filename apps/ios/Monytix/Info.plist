@@ -2,6 +2,15 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.636445644991-3nd322og7egin0h71876l6tkm28qqj7o</string>
+			</array>
+		</dict>
+	</array>
 	<key>MonytixAPIBaseURL</key>
 	<string></string>
 	<key>UIAppFonts</key>

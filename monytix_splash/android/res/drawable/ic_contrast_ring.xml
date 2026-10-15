@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Contrast ring behind O-mark (HTML: #111D2B) -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+    <solid android:color="#111D2B" />
+    <size android:width="164dp" android:height="164dp" />
+</shape>

@@ -14,54 +14,92 @@ struct LoginView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: BusinessSpace.s12) {
-                Text("Monytix")
-                    .businessText(.primary, size: BusinessTypeScale.hero, weight: .extraBold)
-                    .padding(.top, BusinessSpace.s40)
+            VStack(spacing: BusinessSpace.s16) {
+                Image("MonytixOMark")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 72, height: 72)
+                    .padding(.top, 44)
+                    .accessibilityLabel("Monytix")
                 Text(creating ? "Create your account" : "Sign in")
-                    .businessText(.secondary, size: BusinessTypeScale.bodyLarge)
-                field("Email", text: $email)
-                    .textInputAutocapitalization(.never)
-                    .keyboardType(.emailAddress)
-                    .textContentType(.username)
-                SecureField("Password", text: $password)
-                    .textContentType(creating ? .newPassword : .password)
-                    .padding(BusinessSpace.s16)
-                    .background(theme.palette.surface, in: RoundedRectangle(cornerRadius: BusinessRadius.action, style: .continuous))
+                    .businessText(.primary, size: BusinessTypeScale.title, weight: .semiBold)
+                    .multilineTextAlignment(.center)
+                Text("Your money, right now")
+                    .businessText(.secondary, size: BusinessTypeScale.body)
+                    .multilineTextAlignment(.center)
+                labeledField("Email") {
+                    TextField("", text: $email)
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.emailAddress)
+                        .textContentType(.username)
+                }
+                labeledField("Password") {
+                    SecureField("", text: $password)
+                        .textContentType(creating ? .newPassword : .password)
+                }
                 if let message {
                     Text(message)
                         .businessText(.attention, size: BusinessTypeScale.bodySmall)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity)
                 }
                 Button(creating ? "Create account" : "Sign in") {
                     Task { await submitEmail() }
                 }
                 .buttonStyle(GoldButtonStyle(enabled: !busy))
                 .disabled(busy)
+                orDivider
                 Button("Continue with Google") {
                     Task { await submit { await session.signInWithGoogle() } }
                 }
-                .buttonStyle(GoldButtonStyle(enabled: !busy))
+                .buttonStyle(OutlinedButtonStyle(enabled: !busy))
                 .disabled(busy)
                 Button("Continue with Apple") {
                     Task { await submit { await session.signInWithApple() } }
                 }
-                .buttonStyle(GoldButtonStyle(enabled: !busy))
+                .buttonStyle(OutlinedButtonStyle(enabled: !busy))
                 .disabled(busy)
                 Button(creating ? "Have an account? Sign in" : "New here? Create account") {
                     creating.toggle()
                 }
+                .buttonStyle(.plain)
                 .businessText(.accent, size: BusinessTypeScale.body, weight: .semiBold)
                 .frame(maxWidth: .infinity)
+                .padding(.top, BusinessSpace.s8)
+                .disabled(busy)
             }
-            .padding(BusinessSpace.s20)
+            .padding(.horizontal, BusinessSpace.s28)
+            .padding(.bottom, BusinessSpace.s28)
         }
+        .scrollDismissesKeyboard(.interactively)
         .businessCanvas()
     }
 
-    private func field(_ title: String, text: Binding<String>) -> some View {
-        TextField(title, text: text)
-            .padding(BusinessSpace.s16)
-            .background(theme.palette.surface, in: RoundedRectangle(cornerRadius: BusinessRadius.action, style: .continuous))
+    private var orDivider: some View {
+        HStack(spacing: BusinessSpace.s12) {
+            Rectangle().businessDivider()
+            Text("or")
+                .businessText(.secondary, size: BusinessTypeScale.caption)
+            Rectangle().businessDivider()
+        }
+        .padding(.vertical, BusinessSpace.s4)
+    }
+
+    private func labeledField<Field: View>(_ title: String, @ViewBuilder field: () -> Field) -> some View {
+        VStack(alignment: .leading, spacing: BusinessSpace.s8) {
+            Text(title)
+                .businessText(.secondary, size: BusinessTypeScale.bodySmall)
+            field()
+                .font(.custom("Inter-Regular", size: BusinessTypeScale.body))
+                .foregroundStyle(theme.palette.textPrimary)
+                .padding(.horizontal, BusinessSpace.s16)
+                .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+                .background(theme.palette.surface, in: RoundedRectangle(cornerRadius: BusinessRadius.action, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: BusinessRadius.action, style: .continuous)
+                        .stroke(theme.palette.border, lineWidth: 1)
+                )
+        }
     }
 
     private func submitEmail() async {
@@ -104,6 +142,30 @@ private struct GoldButtonStyle: ButtonStyle {
             .background(
                 enabled ? (configuration.isPressed ? BusinessTokens.action.pressed : BusinessTokens.action.default) : theme.palette.disabledFill,
                 in: RoundedRectangle(cornerRadius: BusinessRadius.action, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: BusinessRadius.action, style: .continuous)
+                    .stroke(enabled ? BusinessTokens.action.border : theme.palette.disabledBorder, lineWidth: 1)
+            )
+    }
+}
+
+private struct OutlinedButtonStyle: ButtonStyle {
+    @Environment(\.businessTheme) private var theme
+    let enabled: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.custom("Inter-SemiBold", size: BusinessTypeScale.body))
+            .foregroundStyle(enabled ? theme.palette.textPrimary : theme.palette.disabledLabel)
+            .frame(maxWidth: .infinity, minHeight: 48)
+            .background(
+                enabled ? theme.palette.surface : theme.palette.disabledFill,
+                in: RoundedRectangle(cornerRadius: BusinessRadius.action, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: BusinessRadius.action, style: .continuous)
+                    .stroke(enabled ? theme.palette.border : theme.palette.disabledBorder, lineWidth: 1)
             )
     }
 }

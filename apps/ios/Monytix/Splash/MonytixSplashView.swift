@@ -3,146 +3,216 @@ import SwiftUI
 struct MonytixSplashView: View {
     let onComplete: (() -> Void)?
 
-    @State private var glowsVisible = false
-    @State private var ringOpacity: Double = 0
-    @State private var seedScale: CGFloat = 0.01
-    @State private var seedOpacity: Double = 1
-    @State private var yel = false
-    @State private var cyn = false
-    @State private var org = false
-    @State private var nav = false
-    @State private var showDivider = false
-    @State private var showWordmark = false
-    @State private var showTagline = false
-    @State private var showCategory = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var track: Double = 0
+    @State private var sweep: Double = 0
+    @State private var loader: Double = 1
+    @State private var markScale: CGFloat = 0.85
+    @State private var markAlpha: Double = 0
+    @State private var yellow: Double = 0
+    @State private var cyan: Double = 0
+    @State private var orange: Double = 0
+    @State private var navy: Double = 0
+    @State private var wipe: Double = 0
+    @State private var shimmer: Double = 0
+    @State private var shimmerVisible = false
 
-    private let nightSky = Color(red: 13.0 / 255, green: 18.0 / 255, blue: 24.0 / 255)
+    private let nightSky = Color(red: 13.0 / 255, green: 27.0 / 255, blue: 42.0 / 255)
     private let sage = Color(red: 138.0 / 255, green: 188.0 / 255, blue: 158.0 / 255)
     private let amber = Color(red: 196.0 / 255, green: 149.0 / 255, blue: 106.0 / 255)
-    private let contrast = Color(red: 17.0 / 255, green: 29.0 / 255, blue: 43.0 / 255)
-    private let omarkSize: CGFloat = 140
 
     init(onComplete: (() -> Void)? = nil) {
         self.onComplete = onComplete
     }
 
     var body: some View {
-        ZStack {
-            nightSky.ignoresSafeArea()
-            RadialGradient(colors: [sage.opacity(0.15), .clear], center: .topTrailing, startRadius: 0, endRadius: 400)
-                .ignoresSafeArea()
-                .opacity(glowsVisible ? 1 : 0)
-            RadialGradient(colors: [amber.opacity(0.09), .clear], center: .bottomLeading, startRadius: 0, endRadius: 340)
-                .ignoresSafeArea()
-                .opacity(glowsVisible ? 1 : 0)
-
-            VStack(spacing: 0) {
-                Spacer()
+        GeometryReader { geo in
+            let wordWidth = min(300, geo.size.width * 0.64)
+            VStack(spacing: 24) {
                 ZStack {
-                    Circle()
-                        .fill(contrast)
-                        .frame(width: omarkSize + 20, height: omarkSize + 20)
-                        .opacity(ringOpacity)
-                    Circle()
-                        .fill(amber)
-                        .frame(width: omarkSize * seedScale, height: omarkSize * seedScale)
-                        .opacity(seedOpacity)
-                    OmarkShape(yel: yel, cyn: cyn, org: org, nav: nav)
-                        .frame(width: omarkSize, height: omarkSize)
+                    LoaderRing(track: track, sweep: sweep, loader: loader, sage: sage, amber: amber)
+                    OmarkShape(yellow: yellow, cyan: cyan, orange: orange, navy: navy)
+                        .frame(width: 96, height: 96)
+                        .scaleEffect(markScale)
+                        .opacity(markAlpha)
                 }
-                .frame(width: omarkSize + 20, height: omarkSize + 20)
+                .frame(width: 96, height: 96)
 
-                RoundedRectangle(cornerRadius: 0.5)
-                    .fill(LinearGradient(colors: [.clear, amber.opacity(0.65), .clear], startPoint: .leading, endPoint: .trailing))
-                    .frame(width: showDivider ? 180 : 0, height: 1)
-                    .padding(.top, 28)
-                    .animation(.easeInOut(duration: 0.55), value: showDivider)
-
-                Image("MonytixWordmark")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 260, height: 48)
-                    .padding(.top, 18)
-                    .opacity(showWordmark ? 1 : 0)
-                    .offset(y: showWordmark ? 0 : 40)
-                    .animation(.spring(dampingFraction: 0.7), value: showWordmark)
-
-                Text("ADAPTIVE FINANCIAL INTELLIGENCE")
-                    .font(.custom("Inter-SemiBold", size: 11))
-                    .tracking(2.5)
-                    .foregroundStyle(sage.opacity(0.85))
-                    .padding(.top, 14)
-                    .opacity(showTagline ? 1 : 0)
-                    .animation(.easeIn(duration: 0.6), value: showTagline)
-                Spacer()
+                GoldWordmark(width: wordWidth, wipe: wipe, shimmer: shimmer, shimmerVisible: shimmerVisible)
             }
-
-            VStack {
-                Spacer()
-                Text("INDIA'S DECISION LAYER FOR MONEY")
-                    .font(.custom("Inter-SemiBold", size: 9))
-                    .tracking(2.8)
-                    .foregroundStyle(amber.opacity(0.55))
-                    .padding(.bottom, 48)
-                    .opacity(showCategory ? 1 : 0)
-                    .animation(.easeIn(duration: 0.5), value: showCategory)
-            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .ignoresSafeArea()
-        .task { await runSequence() }
+        .background(nightSky.ignoresSafeArea())
+        .task(id: reduceMotion) { await runSequence() }
     }
 
     private func runSequence() async {
-        glowsVisible = true
-        withAnimation(.easeInOut(duration: 0.45)) { ringOpacity = 0.7 }
+        if reduceMotion {
+            markScale = 1
+            markAlpha = 1
+            yellow = 1
+            cyan = 1
+            orange = 1
+            navy = 1
+            wipe = 1
+            onComplete?()
+            return
+        }
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        await tween(350, ease: easeOut) { track = $0 * 0.1 }
+        await tween(900, ease: easeInOut) { sweep = $0 }
+        try? await Task.sleep(nanoseconds: 60_000_000)
+        await tween(250, ease: easeOut) { value in
+            track = 0.1 * (1 - value)
+            loader = 1 - value
+        }
+        track = 0
+        loader = 0
+        withAnimation(.timingCurve(0.34, 1.56, 0.64, 1, duration: 0.4)) {
+            markScale = 1
+        }
+        withAnimation(.timingCurve(0.25, 0.1, 0.25, 1, duration: 0.18)) {
+            markAlpha = 1
+        }
+        fadeSegment(delay: 0) { yellow = $0 }
+        fadeSegment(delay: 0.06) { cyan = $0 }
+        fadeSegment(delay: 0.12) { orange = $0 }
+        fadeSegment(delay: 0.18) { navy = $0 }
+        try? await Task.sleep(nanoseconds: 420_000_000)
+        await tween(700, ease: easeInOut) { wipe = $0 }
         try? await Task.sleep(nanoseconds: 200_000_000)
-        withAnimation(.easeInOut(duration: 0.65)) { seedScale = 1 }
-        try? await Task.sleep(nanoseconds: 710_000_000)
-        withAnimation(.easeOut(duration: 0.25)) { seedOpacity = 0 }
-        let segAnim = Animation.spring(response: 0.4, dampingFraction: 0.55)
-        withAnimation(segAnim) { yel = true }
-        try? await Task.sleep(nanoseconds: 110_000_000)
-        withAnimation(segAnim) { cyn = true }
-        try? await Task.sleep(nanoseconds: 110_000_000)
-        withAnimation(segAnim) { org = true }
-        try? await Task.sleep(nanoseconds: 110_000_000)
-        withAnimation(segAnim) { nav = true }
-        try? await Task.sleep(nanoseconds: 580_000_000)
-        showDivider = true
-        try? await Task.sleep(nanoseconds: 250_000_000)
-        showWordmark = true
-        try? await Task.sleep(nanoseconds: 700_000_000)
-        showTagline = true
-        try? await Task.sleep(nanoseconds: 200_000_000)
-        showCategory = true
-        try? await Task.sleep(nanoseconds: 700_000_000)
+        shimmerVisible = true
+        await tween(700, ease: easeInOut) { shimmer = $0 }
+        shimmerVisible = false
+        try? await Task.sleep(nanoseconds: 600_000_000)
         onComplete?()
+    }
+
+    private func fadeSegment(delay: Double, set: @escaping (Double) -> Void) {
+        Task {
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            await tween(220, ease: cssEase, set: set)
+        }
+    }
+
+    private func tween(_ ms: Double, ease: (Double) -> Double, set: (Double) -> Void) async {
+        let frames = max(1, Int(ms / (1000.0 / 60.0)))
+        for frame in 0...frames {
+            let t = Double(frame) / Double(frames)
+            set(ease(t))
+            try? await Task.sleep(nanoseconds: 16_666_667)
+        }
+    }
+
+    private func easeOut(_ t: Double) -> Double {
+        1 - pow(1 - t, 3)
+    }
+
+    private func easeInOut(_ t: Double) -> Double {
+        t < 0.5 ? 4 * t * t * t : 1 - pow(-2 * t + 2, 3) / 2
+    }
+
+    private func cssEase(_ t: Double) -> Double {
+        let c = UnitCurve.bezier(startControlPoint: .init(x: 0.25, y: 0.1), endControlPoint: .init(x: 0.25, y: 1))
+        return c.value(at: t)
+    }
+}
+
+private struct LoaderRing: View {
+    let track: Double
+    let sweep: Double
+    let loader: Double
+    let sage: Color
+    let amber: Color
+
+    var body: some View {
+        Canvas { context, size in
+            let stroke = 8 / 96 * size.width
+            let radius = 35 / 96 * size.width
+            let center = CGPoint(x: size.width / 2, y: size.height / 2)
+            if track > 0 {
+                let rect = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
+                context.stroke(Path(ellipseIn: rect), with: .color(sage.opacity(track)), style: StrokeStyle(lineWidth: stroke, lineCap: .butt))
+            }
+            if loader > 0 && sweep > 0 {
+                var path = Path()
+                path.addArc(
+                    center: center,
+                    radius: radius,
+                    startAngle: .degrees(-90),
+                    endAngle: .degrees(-90 + 360 * sweep),
+                    clockwise: false
+                )
+                context.stroke(path, with: .color(amber.opacity(loader)), style: StrokeStyle(lineWidth: stroke, lineCap: .butt))
+            }
+        }
+        .frame(width: 96, height: 96)
+    }
+}
+
+private struct GoldWordmark: View {
+    let width: CGFloat
+    let wipe: Double
+    let shimmer: Double
+    let shimmerVisible: Bool
+
+    var body: some View {
+        Image("MonytixWordmarkGold")
+            .resizable()
+            .scaledToFit()
+            .frame(width: width, height: 48)
+            .overlay {
+                GeometryReader { geo in
+                    let start = geo.size.width * ((-80 + shimmer * 260) / 100)
+                    LinearGradient(
+                        stops: [
+                            .init(color: .white.opacity(0), location: 0),
+                            .init(color: .white.opacity(0), location: 0.45),
+                            .init(color: .white.opacity(0.45), location: 0.5),
+                            .init(color: .white.opacity(0), location: 0.55),
+                            .init(color: .white.opacity(0), location: 1),
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: geo.size.width * 0.6)
+                    .offset(x: start)
+                }
+                .mask(Image("MonytixWordmarkGold").resizable().scaledToFit())
+                .blendMode(.screen)
+                .opacity(shimmerVisible ? 1 : 0)
+                .allowsHitTesting(false)
+            }
+            .mask(alignment: .leading) {
+                Rectangle().frame(width: width * wipe)
+            }
+            .frame(width: width, height: 48, alignment: .leading)
+            .accessibilityLabel("Monytix")
     }
 }
 
 private struct OmarkShape: View {
-    let yel: Bool
-    let cyn: Bool
-    let org: Bool
-    let nav: Bool
+    let yellow: Double
+    let cyan: Double
+    let orange: Double
+    let navy: Double
 
     var body: some View {
         ZStack {
-            segment(yellowPath, Color(red: 249.0 / 255, green: 197.0 / 255, blue: 21.0 / 255), yel)
-            segment(cyanPath, Color(red: 85.0 / 255, green: 194.0 / 255, blue: 239.0 / 255), cyn)
-            segment(orangePath, Color(red: 244.0 / 255, green: 117.0 / 255, blue: 33.0 / 255), org)
-            segment(navyPath, Color(red: 49.0 / 255, green: 58.0 / 255, blue: 150.0 / 255), nav)
+            segment(yellowPath, Color(red: 249.0 / 255, green: 197.0 / 255, blue: 21.0 / 255), yellow)
+            segment(cyanPath, Color(red: 85.0 / 255, green: 194.0 / 255, blue: 239.0 / 255), cyan)
+            segment(orangePath, Color(red: 244.0 / 255, green: 117.0 / 255, blue: 33.0 / 255), orange)
+            segment(navyPath, Color(red: 49.0 / 255, green: 58.0 / 255, blue: 150.0 / 255), navy)
         }
     }
 
-    private func segment(_ path: () -> Path, _ color: Color, _ visible: Bool) -> some View {
+    private func segment(_ path: @escaping () -> Path, _ color: Color, _ alpha: Double) -> some View {
         Canvas { context, size in
             let transform = CGAffineTransform(translationX: -308, y: -278)
                 .concatenating(CGAffineTransform(scaleX: size.width / 134, y: size.height / 148))
             context.fill(path().applying(transform), with: .color(color))
         }
-        .opacity(visible ? 1 : 0)
-        .scaleEffect(visible ? 1 : 0.55)
+        .opacity(alpha)
     }
 }
 

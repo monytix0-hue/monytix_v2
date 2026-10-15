@@ -1,40 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  Legacy splash drawable for Android < 12 (API < 31)
-  Centers the O-mark over the Night Sky background.
-  Place in res/drawable/splash_background_legacy.xml
--->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android"
     android:opacity="opaque">
-
-    <!-- Night Sky base -->
     <item>
         <shape android:shape="rectangle">
-            <solid android:color="#0D1218" />
+            <solid android:color="#0D1B2A" />
         </shape>
     </item>
-
-    <!-- Sage glow top-right -->
-    <item>
-        <shape android:shape="oval">
-            <gradient
-                android:type="radial"
-                android:gradientRadius="60%"
-                android:centerX="0.85"
-                android:centerY="0.15"
-                android:startColor="#148ABC9E"
-                android:endColor="#00000000" />
-        </shape>
-    </item>
-
-    <!-- Centered O-mark icon -->
-    <item
-        android:width="120dp"
-        android:height="120dp"
-        android:gravity="center">
-        <bitmap
-            android:src="@drawable/ic_monytix_omark"
-            android:gravity="center" />
-    </item>
-
 </layer-list>

@@ -1,0 +1,726 @@
+package com.monytix.app.missions
+
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.monytix.app.auth.MonytixApi
+import com.monytix.app.theme.LocalPersonalTheme
+import com.monytix.app.theme.PersonalRadius
+import com.monytix.app.theme.PersonalSpace
+import org.json.JSONObject
+
+enum class MissionPage { Home, Create }
+
+sealed class MissionStep {
+    data class Options(val direction: String) : MissionStep()
+    data class Setup(val name: String) : MissionStep()
+    data object Detail : MissionStep()
+    data object Progress : MissionStep()
+    data object Milestone : MissionStep()
+    data object History : MissionStep()
+    data object Complete : MissionStep()
+    data object Completed : MissionStep()
+    data object SomethingElse : MissionStep()
+}
+
+private const val Unavailable = "Unavailable"
+
+private data class MissionRow(val id: String, val title: String?, val line: String?, val progress: String?)
+
+private data class MissionList(val headline: String?, val summaryLine: String?, val pills: List<String>, val active: List<MissionRow>, val completed: List<MissionRow>) {
+    companion object {
+        fun empty() = MissionList(null, null, emptyList(), emptyList(), emptyList())
+
+        fun parse(json: String): MissionList {
+            return try {
+                val root = JSONObject(json)
+                val summary = root.optJSONObject("summary")
+                val ready = summary?.optBoolean("available") == true
+                MissionList(
+                    headline = if (ready) text(summary, "headline") else null,
+                    summaryLine = if (ready) text(summary, "line") else null,
+                    pills = if (ready) texts(summary.optJSONArray("pills")) else emptyList(),
+                    active = rows(root.optJSONArray("active")),
+                    completed = rows(root.optJSONArray("completed")),
+                )
+            } catch (_: Exception) {
+                empty()
+            }
+        }
+    }
+}
+
+private data class MissionDetail(val title: String?, val line: String?, val progress: String?, val matters: String?, val impact: String?, val intelligence: String?, val recent: String?) {
+    companion object {
+        fun empty() = MissionDetail(null, null, null, null, null, null, null)
+
+        fun parse(json: String?): MissionDetail {
+            if (json.isNullOrBlank()) return empty()
+            return try {
+                val mission = JSONObject(json).optJSONObject("mission") ?: return empty()
+                MissionDetail(text(mission, "title"), text(mission, "line"), text(mission, "progress"), text(mission, "matters"), text(mission, "impact"), text(mission, "intelligence"), text(mission, "recent"))
+            } catch (_: Exception) {
+                empty()
+            }
+        }
+    }
+}
+
+private data class JournalEntry(val title: String?, val detail: String?)
+
+private fun journal(json: String?): List<JournalEntry> {
+    if (json.isNullOrBlank()) return emptyList()
+    return try {
+        val rows = JSONObject(json).optJSONArray("entries") ?: return emptyList()
+        buildList {
+            for (index in 0 until rows.length()) {
+                val row = rows.optJSONObject(index) ?: continue
+                add(JournalEntry(text(row, "title"), text(row, "detail")))
+            }
+        }
+    } catch (_: Exception) {
+        emptyList()
+    }
+}
+
+private data class MissionCompletion(val title: String?, val changed: String?, val proof: String?, val unlocks: String?) {
+    companion object {
+        fun empty() = MissionCompletion(null, null, null, null)
+
+        fun parse(json: String?): MissionCompletion {
+            if (json.isNullOrBlank()) return empty()
+            return try {
+                val mission = JSONObject(json).optJSONObject("mission") ?: return empty()
+                MissionCompletion(text(mission, "title"), text(mission, "changed"), text(mission, "proof"), text(mission, "unlocks"))
+            } catch (_: Exception) {
+                empty()
+            }
+        }
+    }
+}
+
+private fun rows(array: org.json.JSONArray?): List<MissionRow> {
+    if (array == null) return emptyList()
+    return buildList {
+        for (index in 0 until array.length()) {
+            val row = array.optJSONObject(index) ?: continue
+            val id = row.optString("id")
+            if (id.isBlank()) continue
+            add(MissionRow(id, text(row, "title"), text(row, "line"), text(row, "progress")))
+        }
+    }
+}
+
+private fun texts(array: org.json.JSONArray?): List<String> {
+    if (array == null) return emptyList()
+    return buildList {
+        for (index in 0 until array.length()) {
+            val value = array.optString(index)
+            if (value.isNotBlank()) add(value)
+        }
+    }
+}
+
+private fun text(obj: JSONObject?, key: String): String? = obj?.optString(key).orEmpty().ifBlank { null }
+
+private data class CatalogMission(val name: String, val code: String)
+
+private data class Direction(
+    val name: String,
+    val line: String,
+    val focus: String,
+    val prompt: String,
+    val missions: List<CatalogMission>,
+)
+
+private val directions = listOf(
+    Direction(
+        "Build Safety",
+        "Emergency buffer · protection",
+        "Build an Emergency Buffer",
+        "Choose the safety outcome you want to build.",
+        listOf(
+            CatalogMission("Build an Emergency Buffer", "M01"),
+            CatalogMission("Build an Income-Loss Buffer", "M02"),
+            CatalogMission("Build a Medical Reserve", "M03"),
+            CatalogMission("Strengthen Insurance Protection", "M04"),
+            CatalogMission("Prepare for an Unexpected Expense", "M05"),
+            CatalogMission("Build 6–12 Months of Security", "M06"),
+        ),
+    ),
+    Direction(
+        "Reduce Debt",
+        "Cards · loans · commitments",
+        "Pay Off a Personal Loan Faster",
+        "Choose the debt outcome you want to work toward.",
+        listOf(
+            CatalogMission("Clear Credit-Card Debt", "M07"),
+            CatalogMission("Reduce Debt", "M08"),
+            CatalogMission("Reduce Home-Loan Burden", "M09"),
+            CatalogMission("Reduce EMI Pressure", "M10"),
+            CatalogMission("Cut Recurring Commitments", "M11"),
+            CatalogMission("Become Debt-Free", "M12"),
+        ),
+    ),
+    Direction(
+        "Save for Something",
+        "Home · vehicle · education",
+        "Build an Education Fund",
+        "Choose what you want to prepare and save for.",
+        listOf(
+            CatalogMission("Build a Home Fund", "M13"),
+            CatalogMission("Save for a Vehicle", "M14"),
+            CatalogMission("Save for Something", "M15"),
+            CatalogMission("Save for a Wedding", "M16"),
+            CatalogMission("Build a Travel Fund", "M17"),
+            CatalogMission("Fund a Major Purchase", "M18"),
+        ),
+    ),
+    Direction(
+        "Build Wealth",
+        "Investing · retirement",
+        "Build a Long-Term Corpus",
+        "Choose the wealth outcome you want to build.",
+        listOf(
+            CatalogMission("Start Investing Regularly", "M19"),
+            CatalogMission("Increase My SIP", "M20"),
+            CatalogMission("Put Idle Cash to Work", "M21"),
+            CatalogMission("Build Wealth", "M22"),
+            CatalogMission("Keep My Portfolio Balanced", "M23"),
+            CatalogMission("Build My Retirement Corpus", "M24"),
+        ),
+    ),
+    Direction(
+        "Improve Spending",
+        "Dining · shopping · leakage",
+        "Reduce Discretionary Spending",
+        "Choose the spending pattern you want to improve.",
+        listOf(
+            CatalogMission("Reduce Dining Spend", "M25"),
+            CatalogMission("Control Shopping Spend", "M26"),
+            CatalogMission("Reduce Entertainment Spend", "M27"),
+            CatalogMission("Keep Travel Spending Under Control", "M28"),
+            CatalogMission("Improve Spending", "M29"),
+            CatalogMission("Stop Financial Leakage", "M30"),
+        ),
+    ),
+    Direction(
+        "Improve Cash Flow",
+        "Salary · surplus · large expenses",
+        "Increase My Savings Rate",
+        "Choose the cash-flow outcome you want to improve.",
+        listOf(
+            CatalogMission("Allocate My Salary Better", "M31"),
+            CatalogMission("Put Monthly Surplus to Work", "M32"),
+            CatalogMission("Avoid a Cash Crunch", "M33"),
+            CatalogMission("Prepare for a Large Upcoming Expense", "M34"),
+            CatalogMission("Use a Bonus or Windfall Better", "M35"),
+            CatalogMission("Improve Cash Flow", "M36"),
+        ),
+    ),
+    Direction(
+        "Support Life & Family",
+        "Children · parents · healthcare",
+        "Support Life & Family",
+        "Choose the life or family outcome you want to prepare for.",
+        listOf(
+            CatalogMission("Build a Fund for My Children", "M37"),
+            CatalogMission("Support My Parents", "M38"),
+            CatalogMission("Prepare for Family Healthcare", "M39"),
+            CatalogMission("Prepare for Family Education", "M40"),
+            CatalogMission("Build a Family Safety Net", "M41"),
+            CatalogMission("Prepare for a Family Milestone", "M42"),
+        ),
+    ),
+    Direction(
+        "Create Freedom",
+        "Career break · business · independence",
+        "Create Freedom",
+        "Choose the freedom you want your finances to help create.",
+        listOf(
+            CatalogMission("Prepare for a Career Break", "M43"),
+            CatalogMission("Prepare to Start a Business", "M44"),
+            CatalogMission("Prepare to Relocate", "M45"),
+            CatalogMission("Work Toward Financial Independence", "M46"),
+            CatalogMission("Retire Earlier", "M47"),
+            CatalogMission("Build More Financial Flexibility", "M48"),
+        ),
+    ),
+)
+
+private val crossLinks = listOf(
+    "Support Life & Family" to "Children · parents · healthcare",
+    "Create Freedom" to "Career break · business · independence",
+)
+
+@Composable
+fun MissionHome(
+    api: MonytixApi,
+    token: suspend (Boolean) -> String?,
+    onCreate: () -> Unit,
+    onActive: (String) -> Unit,
+    onCompleted: (String) -> Unit,
+) {
+    val theme = LocalPersonalTheme.current
+    var list by remember { mutableStateOf(MissionList.empty()) }
+    LaunchedEffect(api) {
+        val json = api.getJson("/v1/ui/missions", token)
+        list = if (json.isNullOrBlank()) MissionList.empty() else MissionList.parse(json)
+    }
+    val pills = list.pills.ifEmpty { listOf(Unavailable, Unavailable) }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = PersonalSpace.s20)
+            .padding(top = PersonalSpace.s20, bottom = 128.dp),
+        verticalArrangement = Arrangement.spacedBy(PersonalSpace.s20),
+    ) {
+        Column {
+            Text("Missions", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 22.sp)
+            Text("The things you’ve chosen to make happen.", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
+        }
+        SurfaceCard {
+            Text(list.summaryLine ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+            Text(list.headline ?: Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+            Text("working toward your goals", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s8)) {
+                pills.forEach { StatusPill(it) }
+            }
+        }
+        Text("ACTIVE", color = eyebrow(), fontFamily = theme.fontFamily, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
+        val active = list.active
+        if (active.isEmpty()) {
+            ActiveCard(null) {}
+        } else {
+            active.forEach { row -> ActiveCard(row) { onActive(row.id) } }
+        }
+        val completed = list.completed.firstOrNull()
+        Row(
+            modifier = Modifier.fillMaxWidth().then(if (completed != null) Modifier.clickable { onCompleted(completed.id) } else Modifier),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Outlined.Check, contentDescription = null, tint = theme.palette.textSecondary, modifier = Modifier.size(18.dp))
+            Text("  Completed Missions", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+        }
+        Gold("Create a Mission", onCreate)
+    }
+}
+
+@Composable
+fun MissionCreate(onBack: () -> Unit, onDirection: (String) -> Unit, onSomethingElse: () -> Unit) {
+    val theme = LocalPersonalTheme.current
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(theme.palette.canvas)
+            .verticalScroll(rememberScrollState())
+            .navigationBarsPadding()
+            .padding(horizontal = PersonalSpace.s20)
+            .padding(top = PersonalSpace.s16, bottom = PersonalSpace.s32),
+        verticalArrangement = Arrangement.spacedBy(PersonalSpace.s16),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s12)) {
+            CircleButton(onBack) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back", tint = theme.palette.textPrimary)
+            }
+            Text("Create a Mission", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 22.sp)
+        }
+        Text("What do you want to make happen?", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Text("Choose the closest direction. You can make it yours on the next step.", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
+        directions.chunked(2).forEach { row ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s12)) {
+                row.forEach { direction ->
+                    SurfaceCard(Modifier.weight(1f).clickable { onDirection(direction.name) }) {
+                        Text(direction.name, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Text(direction.line, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+                    }
+                }
+            }
+        }
+        SurfaceCard(Modifier.clickable(onClick = onSomethingElse)) {
+            Text("Something else", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            Text("Tell Monytix in your own words", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+        }
+    }
+}
+
+@Composable
+fun MissionSheets(
+    api: MonytixApi,
+    token: suspend (Boolean) -> String?,
+    missionId: String,
+    stack: List<MissionStep>,
+    onChange: (List<MissionStep>) -> Unit,
+    onOpenMile: () -> Unit,
+) {
+    val step = stack.lastOrNull() ?: return
+    val theme = LocalPersonalTheme.current
+    var detail by remember { mutableStateOf(MissionDetail.empty()) }
+    var entries by remember { mutableStateOf(emptyList<JournalEntry>()) }
+    var completion by remember { mutableStateOf(MissionCompletion.empty()) }
+    LaunchedEffect(missionId) {
+        if (missionId.isBlank()) {
+            detail = MissionDetail.empty()
+            entries = emptyList()
+            completion = MissionCompletion.empty()
+            return@LaunchedEffect
+        }
+        detail = MissionDetail.parse(api.getJson("/v1/ui/missions/$missionId", token))
+        entries = journal(api.getJson("/v1/ui/missions/$missionId/journal", token))
+        completion = MissionCompletion.parse(api.getJson("/v1/ui/missions/$missionId/completion", token))
+    }
+    fun pop() { onChange(stack.dropLast(1)) }
+    fun push(next: MissionStep) { onChange(stack + next) }
+    fun replace(next: MissionStep) { onChange(stack.dropLast(1) + next) }
+    Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f)).clickable { pop() })
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .fillMaxHeight(0.92f)
+                .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+                .background(theme.palette.sheet)
+                .verticalScroll(rememberScrollState())
+                .navigationBarsPadding()
+                .padding(PersonalSpace.s20),
+            verticalArrangement = Arrangement.spacedBy(PersonalSpace.s16),
+        ) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(sheetTitle(step, detail.title ?: completion.title), color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 22.sp, modifier = Modifier.weight(1f))
+                CircleButton(::pop) {
+                    Icon(Icons.Outlined.Close, contentDescription = "Close", tint = theme.palette.textPrimary)
+                }
+            }
+            when (step) {
+                is MissionStep.Options -> OptionsBody(step.direction, onMission = { push(MissionStep.Setup(it)) }, onDirection = { replace(MissionStep.Options(it)) }, onBack = ::pop)
+                is MissionStep.Setup -> SetupBody(step.name)
+                MissionStep.Detail -> DetailBody(detail, onProgress = { push(MissionStep.Progress) }, onHistory = { push(MissionStep.History) }, onMilestone = { push(MissionStep.Milestone) }, onComplete = { push(MissionStep.Complete) })
+                MissionStep.Progress -> ProgressBody()
+                MissionStep.Milestone -> MilestoneBody(::pop)
+                MissionStep.History -> HistoryBody(entries)
+                MissionStep.Complete -> CompleteBody(completion) {
+                    onChange(emptyList())
+                    onOpenMile()
+                }
+                MissionStep.Completed -> CompletedBody(detail) { push(MissionStep.History) }
+                MissionStep.SomethingElse -> SomethingElseBody()
+            }
+        }
+    }
+}
+
+@Composable
+private fun OptionsBody(directionName: String, onMission: (String) -> Unit, onDirection: (String) -> Unit, onBack: () -> Unit) {
+    val direction = directions.first { it.name == directionName }
+    val theme = LocalPersonalTheme.current
+    Text(direction.focus, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+    Text(direction.prompt, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
+    direction.missions.chunked(2).forEach { row ->
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s12)) {
+            row.forEach { mission ->
+                SurfaceCard(Modifier.weight(1f).clickable { onMission(mission.name) }) {
+                    Text(mission.name, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text("${mission.code} · Canonical Mission", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 12.sp)
+                }
+            }
+        }
+    }
+    crossLinks.forEach { (name, line) ->
+        SurfaceCard(Modifier.clickable { onDirection(name) }) {
+            Text(name, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            Text(line, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+        }
+    }
+    SurfaceCard(Modifier.clickable(onClick = onBack)) {
+        Text("Back to Mission directions", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        Text("Choose a different Mission category", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+    }
+}
+
+@Composable
+private fun SetupBody(name: String) {
+    val theme = LocalPersonalTheme.current
+    Text(name, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+    Text("A few details help Monytix understand what progress means.", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
+    Text("YOUR TARGET", color = eyebrow(), fontFamily = theme.fontFamily, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
+    Text(Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s12)) {
+        SurfaceCard(Modifier.weight(1f)) {
+            Text("Current", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+            Text(Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        }
+        SurfaceCard(Modifier.weight(1f)) {
+            Text("Reach", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+            Text(Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        }
+    }
+    Text("How Monytix understands this", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+    Text(Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
+    Row(horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s8)) {
+        StatusPill(Unavailable)
+        StatusPill(Unavailable)
+        StatusPill(Unavailable)
+    }
+    Text("Related decisions  $Unavailable", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+    Text("HOW DO YOU WANT TO BUILD IT?", color = eyebrow(), fontFamily = theme.fontFamily, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
+    Text(Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+    Text("You can change this anytime.", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+    Gold("Start Mission") {}
+}
+
+@Composable
+private fun DetailBody(detail: MissionDetail, onProgress: () -> Unit, onHistory: () -> Unit, onMilestone: () -> Unit, onComplete: () -> Unit) {
+    val theme = LocalPersonalTheme.current
+    Text(detail.line ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
+    Row(horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s8)) {
+        StatusPill(detail.progress ?: Unavailable)
+        StatusPill(Unavailable)
+    }
+    Text(detail.title ?: Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+    Text(detail.line ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
+    Section("WHAT MATTERS NOW", detail.matters)
+    Section("M.I.L.E. IMPACT", detail.impact)
+    Section("CONNECTED INTELLIGENCE", detail.intelligence)
+    Section("RECENT PROGRESS", detail.recent)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s12)) {
+        TextLink("View Mission history", Modifier.weight(1f), onHistory)
+        TextLink("View latest milestone", Modifier.weight(1f), onMilestone)
+    }
+    TextLink("Mission complete", Modifier.fillMaxWidth(), onComplete)
+    Gold("Add progress", onProgress)
+}
+
+@Composable
+private fun ProgressBody() {
+    Section("HOW MUCH PROGRESS?")
+    Section("WHERE DID THIS COME FROM?")
+    Section("IF YOU ADD THIS")
+    Text("NOTE · OPTIONAL", color = eyebrow(), fontFamily = LocalPersonalTheme.current.fontFamily, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
+    Composer("Add a note")
+    Gold("Add progress") {}
+}
+
+@Composable
+private fun MilestoneBody(onContinue: () -> Unit) {
+    Section("VERIFIED IMPACT")
+    Section("WHY THIS COUNTS")
+    Section("NEXT MARKER")
+    Gold("Continue Mission", onContinue)
+}
+
+@Composable
+private fun HistoryBody(entries: List<JournalEntry>) {
+    val theme = LocalPersonalTheme.current
+    Section("SINCE YOU STARTED")
+    Text("TIMELINE", color = eyebrow(), fontFamily = theme.fontFamily, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
+    val shown = entries.ifEmpty { List(4) { JournalEntry(null, null) } }
+    shown.forEach { entry ->
+        SurfaceCard {
+            Text(entry.title ?: Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            Text(entry.detail ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+        }
+    }
+    Text("Every MILE can be traced back to real progress.", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
+}
+
+@Composable
+private fun CompleteBody(completion: MissionCompletion, onMile: () -> Unit) {
+    Section("WHAT CHANGED", completion.changed)
+    Section("OUTCOME PROOF", completion.proof)
+    Section("WHAT THIS UNLOCKS", completion.unlocks)
+    Gold("See my M.I.L.E.", onMile)
+}
+
+@Composable
+private fun CompletedBody(detail: MissionDetail, onHistory: () -> Unit) {
+    val theme = LocalPersonalTheme.current
+    Text(detail.line ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
+    StatusPill(detail.progress ?: Unavailable)
+    Text(detail.title ?: Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+    Section("MISSION RECORD")
+    Section("INTELLIGENCE RECORD")
+    Section("IMPACT TRACE")
+    TextLink("View full history", Modifier.fillMaxWidth(), onHistory)
+}
+
+@Composable
+private fun SomethingElseBody() {
+    Text("Tell Monytix in your own words", color = LocalPersonalTheme.current.palette.textSecondary, fontFamily = LocalPersonalTheme.current.fontFamily, fontSize = 15.sp)
+    Composer("Describe what you want to make happen")
+}
+
+private fun sheetTitle(step: MissionStep, name: String?) = when (step) {
+    is MissionStep.Options, is MissionStep.Setup, MissionStep.SomethingElse -> "Create a Mission"
+    MissionStep.Detail -> name ?: Unavailable
+    MissionStep.Progress -> "Add progress"
+    MissionStep.Milestone -> "A milestone reached"
+    MissionStep.History -> "Mission history"
+    MissionStep.Complete -> "Mission complete"
+    MissionStep.Completed -> name ?: Unavailable
+}
+
+@Composable
+private fun ActiveCard(row: MissionRow?, onOpen: () -> Unit) {
+    val theme = LocalPersonalTheme.current
+    SurfaceCard(if (row == null) Modifier else Modifier.clickable(onClick = onOpen)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s12)) {
+            EmptyRing()
+            Column(Modifier.weight(1f)) {
+                Text(row?.title ?: Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text(row?.line ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
+            }
+            Text(row?.progress ?: Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        }
+        Box(Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(PersonalRadius.pill)).background(theme.palette.border))
+        Text(row?.line ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+    }
+}
+
+@Composable
+private fun Section(title: String, value: String? = null) {
+    val theme = LocalPersonalTheme.current
+    Text(title, color = eyebrow(), fontFamily = theme.fontFamily, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
+    Text(value ?: Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+    Text(Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
+}
+
+@Composable
+private fun SurfaceCard(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    val theme = LocalPersonalTheme.current
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(PersonalRadius.card))
+            .background(theme.palette.surface)
+            .border(1.dp, theme.palette.border, RoundedCornerShape(PersonalRadius.card))
+            .padding(PersonalSpace.s16),
+        verticalArrangement = Arrangement.spacedBy(PersonalSpace.s8),
+        content = { content() },
+    )
+}
+
+@Composable
+private fun StatusPill(label: String) {
+    val theme = LocalPersonalTheme.current
+    Text(
+        label,
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(if (theme.isDark) theme.palette.surfaceRaised else theme.status.lavender)
+            .padding(horizontal = PersonalSpace.s12, vertical = PersonalSpace.s8),
+        color = if (theme.isDark) theme.palette.popoverBorder else theme.palette.textPrimary,
+        fontFamily = theme.fontFamily,
+        fontWeight = FontWeight.Bold,
+        fontSize = 12.sp,
+    )
+}
+
+@Composable
+private fun Gold(label: String, onClick: () -> Unit) {
+    val theme = LocalPersonalTheme.current
+    Box(
+        modifier = Modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(PersonalRadius.action)).background(theme.action.default).clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, color = theme.action.label, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+    }
+}
+
+@Composable
+private fun TextLink(label: String, modifier: Modifier, onClick: () -> Unit) {
+    val theme = LocalPersonalTheme.current
+    Text(
+        label,
+        color = theme.palette.textPrimary,
+        fontFamily = theme.fontFamily,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 14.sp,
+        modifier = modifier
+            .clip(RoundedCornerShape(PersonalRadius.action))
+            .border(1.dp, theme.palette.border, RoundedCornerShape(PersonalRadius.action))
+            .clickable(onClick = onClick)
+            .padding(vertical = PersonalSpace.s12),
+    )
+}
+
+@Composable
+private fun Composer(hint: String) {
+    val theme = LocalPersonalTheme.current
+    Text(
+        hint,
+        color = theme.palette.textSecondary,
+        fontFamily = theme.fontFamily,
+        fontSize = 15.sp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(PersonalRadius.action))
+            .background(theme.palette.surface)
+            .border(1.dp, theme.palette.border, RoundedCornerShape(PersonalRadius.action))
+            .padding(PersonalSpace.s16),
+    )
+}
+
+@Composable
+private fun CircleButton(onClick: () -> Unit, content: @Composable () -> Unit) {
+    val theme = LocalPersonalTheme.current
+    Box(
+        modifier = Modifier.size(40.dp).clip(CircleShape).background(theme.palette.surface).border(1.dp, theme.palette.border, CircleShape).clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+        content = { content() },
+    )
+}
+
+@Composable
+private fun EmptyRing() {
+    val theme = LocalPersonalTheme.current
+    Box(Modifier.size(56.dp), contentAlignment = Alignment.Center) {
+        Canvas(Modifier.size(48.dp)) {
+            drawArc(color = theme.palette.border, startAngle = -90f, sweepAngle = 360f, useCenter = false, style = Stroke(8.dp.toPx(), cap = StrokeCap.Round))
+        }
+    }
+}
+
+@Composable
+private fun eyebrow() = with(LocalPersonalTheme.current) {
+    if (isDark) palette.popoverBorder else palette.textPrimary
+}

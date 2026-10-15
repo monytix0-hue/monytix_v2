@@ -1,0 +1,9 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="310" height="88" viewBox="0 0 310 88" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Balance visual">
+<path id="Safety pan" d="M278.461 69H246.227L267.716 44.8232L278.461 69Z" stroke="#B65E52" stroke-width="2"/>
+<path id="Flexibility pan" d="M65.7607 66H33.4023L42.3906 39.9336L65.7607 66Z" stroke="#208B79" stroke-width="2"/>
+<path id="Base" d="M155 74C157.761 74 160 71.7614 160 69C160 66.2386 157.761 64 155 64C152.239 64 150 66.2386 150 69C150 71.7614 152.239 74 155 74Z" fill="#B65E52"/>
+<path id="Balance support" d="M155 16V67" stroke="#B65E52" stroke-width="3"/>
+<path id="Balance beam" d="M34 35L276 45" stroke="#B65E52" stroke-width="4" stroke-linecap="round"/>
+</g>
+</svg>

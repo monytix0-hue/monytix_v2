@@ -1,12 +1,11 @@
 import pg from "pg";
+import { readStatementCsv } from "../ingestion/csv.js";
+import { ExtractionFailure } from "../ingestion/failure.js";
+import { combineParsedRow, extractStatementRows } from "../ingestion/statement.js";
+import type { StatementRow } from "../ingestion/table.js";
 import { sha256Hex, type ObjectStorage } from "./storage.js";
 
-type StatementRow = {
-  txn_date: string;
-  amount: string;
-  direction: string;
-  description: string;
-};
+export { readStatementCsv };
 
 type Claim = {
   outcome: string;
@@ -19,31 +18,11 @@ type Claim = {
   };
 };
 
-export function readStatementCsv(text: string): StatementRow[] {
-  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter((line) => line.trim().length > 0);
-  if (lines.length < 2) {
-    throw new Error("invalid statement structure");
-  }
-  const headers = lines[0].split(",").map((header) => header.trim().toLowerCase());
-  const descriptionIndex = headers.indexOf("description");
-  if (descriptionIndex < 0) {
-    throw new Error("invalid statement structure");
-  }
-  const dateIndex = headers.indexOf("txn_date");
-  const amountIndex = headers.indexOf("amount");
-  const directionIndex = headers.indexOf("direction");
-  return lines.slice(1).map((line) => {
-    const cells = line.split(",");
-    return {
-      txn_date: dateIndex >= 0 ? cells[dateIndex]?.trim() ?? "" : "",
-      amount: amountIndex >= 0 ? cells[amountIndex]?.trim() ?? "" : "",
-      direction: directionIndex >= 0 ? cells[directionIndex]?.trim() ?? "" : "",
-      description: cells[descriptionIndex]?.trim() ?? "",
-    };
-  });
-}
-
-export async function runExtractOnce(databaseUrl: string, storage: ObjectStorage): Promise<boolean> {
+export async function runExtractOnce(
+  databaseUrl: string,
+  storage: ObjectStorage,
+  statementPassword?: string,
+): Promise<boolean> {
   const client = new pg.Client({ connectionString: databaseUrl });
   await client.connect();
   try {
@@ -67,21 +46,22 @@ export async function runExtractOnce(databaseUrl: string, storage: ObjectStorage
         await client.query("SELECT ops.finish_statement_extraction($1::uuid, true, NULL)", [job.outbox_event_id]);
         return true;
       }
-      if (job.payload.file_type !== "CSV") {
-        await client.query("SELECT ops.save_statement_extraction($1::uuid, $2, '[]'::jsonb, 'UNSUPPORTED_FILE_LAYOUT', NULL)", [
-          job.payload.source_document_id,
-          actualHash,
-        ]);
-        await client.query("SELECT ops.finish_statement_extraction($1::uuid, true, NULL)", [job.outbox_event_id]);
-        return true;
-      }
       let rows: StatementRow[];
       try {
-        rows = readStatementCsv(object.body.toString("utf8"));
-      } catch {
-        await client.query("SELECT ops.save_statement_extraction($1::uuid, $2, '[]'::jsonb, 'INVALID_STRUCTURE', NULL)", [
+        rows = await extractStatementRows(job.payload.file_type, object.body, statementPassword);
+      } catch (error) {
+        const code = error instanceof ExtractionFailure
+          ? error.code
+          : error instanceof Error && error.message === "invalid statement structure"
+            ? "INVALID_STRUCTURE"
+            : null;
+        if (!code) {
+          throw error;
+        }
+        await client.query("SELECT ops.save_statement_extraction($1::uuid, $2, '[]'::jsonb, $3, NULL)", [
           job.payload.source_document_id,
           actualHash,
+          code,
         ]);
         await client.query("SELECT ops.finish_statement_extraction($1::uuid, true, NULL)", [job.outbox_event_id]);
         return true;
@@ -92,13 +72,7 @@ export async function runExtractOnce(databaseUrl: string, storage: ObjectStorage
           "SELECT spendsense.parse_narration_v4($1, $2) AS parsed",
           [row.description, row.direction],
         );
-        const parsedRow = result.rows[0].parsed;
-        parsed.push({
-          ...parsedRow,
-          description: row.description,
-          txn_date: row.txn_date,
-          amount: row.amount,
-        });
+        parsed.push(combineParsedRow(result.rows[0].parsed, row));
       }
       const saved = await client.query<{ result: { outcome: string; extraction_run_id?: string; status?: string } }>(
         "SELECT ops.save_statement_extraction($1::uuid, $2, $3::jsonb, NULL, NULL) AS result",
@@ -120,9 +94,10 @@ export async function runExtractOnce(databaseUrl: string, storage: ObjectStorage
       await client.query("SELECT ops.finish_statement_extraction($1::uuid, true, NULL)", [job.outbox_event_id]);
       return true;
     } catch (error) {
+      const message = error instanceof Error ? error.message : "extraction failed";
       await client.query("SELECT ops.finish_statement_extraction($1::uuid, false, $2)", [
         job.outbox_event_id,
-        error instanceof Error ? error.message : "extraction failed",
+        statementPassword && message.includes(statementPassword) ? "extraction failed" : message,
       ]);
       return true;
     }

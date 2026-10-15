@@ -1,42 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  Monytix Splash Background
-  Background: Night Sky #0D1218
-  Subtle radial glow using gradient overlay
--->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-
-    <!-- Base dark background -->
     <item>
         <shape android:shape="rectangle">
             <solid android:color="@color/mx_night_sky" />
         </shape>
     </item>
-
-    <!-- Subtle top-right sage glow -->
-    <item>
-        <shape android:shape="oval">
-            <gradient
-                android:type="radial"
-                android:gradientRadius="60%"
-                android:centerX="0.85"
-                android:centerY="0.15"
-                android:startColor="#148ABC9E"
-                android:endColor="#00000000" />
-        </shape>
-    </item>
-
-    <!-- Subtle bottom-left amber glow -->
-    <item>
-        <shape android:shape="oval">
-            <gradient
-                android:type="radial"
-                android:gradientRadius="50%"
-                android:centerX="0.15"
-                android:centerY="0.85"
-                android:startColor="#0FC4956A"
-                android:endColor="#00000000" />
-        </shape>
-    </item>
-
 </layer-list>

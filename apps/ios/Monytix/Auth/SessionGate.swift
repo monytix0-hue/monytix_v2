@@ -8,7 +8,7 @@ struct SessionGate: View {
     var body: some View {
         Group {
             if signedIn {
-                BusinessKitView(onSignOut: signOut)
+                BusinessShellView(api: api, session: session, onSignOut: signOut)
             } else {
                 LoginView(session: session, api: api, onSignedIn: { signedIn = true })
             }

@@ -227,7 +227,7 @@ test("parser v4 adapter persists a clean CSV and rejects ineligible documents", 
       [pdfCreated.data.import_id],
     );
     assert.equal(pdfRun.rows[0]?.status, "FAILED");
-    assert.equal(pdfRun.rows[0]?.reason, "UNSUPPORTED_FILE_LAYOUT");
+    assert.equal(pdfRun.rows[0]?.reason, "SCANNED_DOCUMENT_OCR_NOT_PERMITTED");
 
     const open = await app.inject({
       method: "POST",

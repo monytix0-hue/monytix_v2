@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Backgrounds -->
+    <color name="mx_night_sky">#0D1218</color>
+    <color name="mx_morning_mist">#F0EDE6</color>
+
+    <!-- O-mark segment colours (HTML brand) -->
+    <color name="mx_yellow">#F9C515</color>
+    <color name="mx_cyan">#55C2EF</color>
+    <color name="mx_orange">#F47521</color>
+    <color name="mx_navy_segment">#313A96</color>
+    <color name="mx_contrast_ring">#111D2B</color>
+
+    <!-- Primary actions / states -->
+    <color name="mx_deep_sage">#2C4A3E</color>
+    <color name="mx_sage_green">#8ABC9E</color>
+    <color name="mx_sage_green_light">#6AAA88</color>
+
+    <!-- Caution / risk -->
+    <color name="mx_warm_amber">#C4956A</color>
+    <color name="mx_terracotta">#D4736A</color>
+
+    <!-- Foresight / charts -->
+    <color name="mx_foresight_navy">#1C3A6A</color>
+
+    <!-- Wordmark gold gradient stops -->
+    <color name="mx_gold_light">#FFFFD6</color>
+    <color name="mx_gold_dark">#7A5010</color>
+
+    <!-- Text -->
+    <color name="mx_text_primary">#FFFFFF</color>
+    <color name="mx_text_secondary">#99AABB</color>
+    <color name="mx_pulse_accent">#57F1DB</color>
+    <color name="mx_pulse_bg">#0E1513</color>
+</resources>

@@ -2,7 +2,6 @@ import java.util.Properties
 
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
@@ -39,7 +38,10 @@ android {
 
     sourceSets {
         if (file("google-services.json").exists()) {
-            getByName("main").java.srcDir("src/firebase/java")
+            getByName("main") {
+                java.srcDir("src/firebase/java")
+                kotlin.srcDir("src/firebase/java")
+            }
         }
     }
 
@@ -47,10 +49,10 @@ android {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
     }
+}
 
-    kotlinOptions {
-        jvmTarget = "21"
-    }
+kotlin {
+    jvmToolchain(21)
 }
 
 dependencies {
@@ -61,6 +63,7 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-extended")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     if (file("google-services.json").exists()) {

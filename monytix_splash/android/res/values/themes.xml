@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!--
+      Monytix Splash Theme
+      Uses windowSplashScreenBackground + windowSplashScreenAnimatedIcon
+      for Android 12+ (API 31+) native SplashScreen API.
+      Falls back to a windowBackground drawable for older APIs.
+    -->
+
+    <!-- Android 12+ Splash Screen (res/values-v31/themes.xml) -->
+    <style name="Theme.Monytix.Splash" parent="Theme.SplashScreen">
+        <!-- Night Sky background -->
+        <item name="windowSplashScreenBackground">@color/mx_night_sky</item>
+
+        <!-- Animated O-mark icon (108dp × 108dp) -->
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_monytix_omark</item>
+
+        <!-- Icon background tint (keeps Night Sky behind the icon) -->
+        <item name="windowSplashScreenIconBackgroundColor">@color/mx_night_sky</item>
+
+        <!-- 1200ms animation duration — matches the segment reveal -->
+        <item name="windowSplashScreenAnimationDuration">1200</item>
+
+        <!-- App theme to transition into after splash -->
+        <item name="postSplashScreenTheme">@style/Theme.Monytix</item>
+    </style>
+
+    <!-- Main app theme -->
+    <style name="Theme.Monytix" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/mx_deep_sage</item>
+        <item name="colorPrimaryVariant">@color/mx_sage_green</item>
+        <item name="colorOnPrimary">@color/mx_text_primary</item>
+        <item name="android:windowBackground">@color/mx_night_sky</item>
+        <item name="android:statusBarColor">@color/mx_night_sky</item>
+        <item name="android:navigationBarColor">@color/mx_night_sky</item>
+    </style>
+
+    <!--
+      Legacy splash theme for API < 31
+      Uses a full-screen windowBackground layer-list
+    -->
+    <style name="Theme.Monytix.SplashLegacy" parent="Theme.Monytix">
+        <item name="android:windowBackground">@drawable/splash_background_legacy</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
+
+</resources>

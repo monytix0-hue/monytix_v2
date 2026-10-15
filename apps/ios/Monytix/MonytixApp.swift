@@ -6,6 +6,9 @@
 //
 
 import SwiftUI
+#if canImport(GoogleSignIn)
+import GoogleSignIn
+#endif
 
 @main
 struct MonytixApp: App {
@@ -16,6 +19,11 @@ struct MonytixApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
+                .onOpenURL { url in
+                    #if canImport(GoogleSignIn)
+                    GIDSignIn.sharedInstance.handle(url)
+                    #endif
+                }
         }
     }
 }

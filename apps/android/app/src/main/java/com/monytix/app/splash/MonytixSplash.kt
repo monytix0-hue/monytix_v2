@@ -1,52 +1,69 @@
 package com.monytix.app.splash
 
 import android.app.Activity
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
+import android.provider.Settings
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.Easing
+import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import com.monytix.app.R
-import com.monytix.app.theme.LocalBusinessTheme
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
-private val NightSky = Color(0xFF0D1218)
+private val NightSky = Color(0xFF0D1B2A)
 private val Sage = Color(0xFF8ABC9E)
 private val Amber = Color(0xFFC4956A)
-private val Contrast = Color(0xFF111D2B)
+private val EaseOutCubic = Easing { t ->
+    val u = 1f - t
+    1f - u * u * u
+}
+private val EaseInOutCubic = Easing { t ->
+    if (t < 0.5f) {
+        4f * t * t * t
+    } else {
+        val u = -2f * t + 2f
+        1f - (u * u * u) / 2f
+    }
+}
+private val SegmentOvershoot = CubicBezierEasing(0.34f, 1.56f, 0.64f, 1f)
+private val CssEase = CubicBezierEasing(0.25f, 0.1f, 0.25f, 1f)
 
 @Composable
 fun MonytixSplash(onFinished: () -> Unit) {
@@ -54,187 +71,174 @@ fun MonytixSplash(onFinished: () -> Unit) {
     DisposableEffect(Unit) {
         val window = (view.context as Activity).window
         val controller = WindowCompat.getInsetsController(window, view)
+        val previousStatus = window.statusBarColor
+        val previousNav = window.navigationBarColor
+        window.statusBarColor = 0xFF0D1B2A.toInt()
+        window.navigationBarColor = 0xFF0D1B2A.toInt()
         controller.isAppearanceLightStatusBars = false
         controller.isAppearanceLightNavigationBars = false
-        onDispose { }
+        onDispose {
+            window.statusBarColor = previousStatus
+            window.navigationBarColor = previousNav
+        }
     }
 
-    var phase by remember { mutableIntStateOf(0) }
-    LaunchedEffect(Unit) {
-        phase = 1
+    val reduceMotion = animatorScale() == 0f
+    var track by remember { mutableFloatStateOf(0f) }
+    var sweep by remember { mutableFloatStateOf(0f) }
+    var loader by remember { mutableFloatStateOf(1f) }
+    var markScale by remember { mutableFloatStateOf(if (reduceMotion) 1f else 0.85f) }
+    var markAlpha by remember { mutableFloatStateOf(if (reduceMotion) 1f else 0f) }
+    var yellow by remember { mutableFloatStateOf(if (reduceMotion) 1f else 0f) }
+    var cyan by remember { mutableFloatStateOf(if (reduceMotion) 1f else 0f) }
+    var orange by remember { mutableFloatStateOf(if (reduceMotion) 1f else 0f) }
+    var navy by remember { mutableFloatStateOf(if (reduceMotion) 1f else 0f) }
+    var wipe by remember { mutableFloatStateOf(if (reduceMotion) 1f else 0f) }
+    var shimmer by remember { mutableFloatStateOf(0f) }
+
+    LaunchedEffect(reduceMotion) {
+        if (reduceMotion) {
+            onFinished()
+            return@LaunchedEffect
+        }
+        delay(150)
+        animate(0f, 0.1f, animationSpec = tween(350, easing = EaseOutCubic)) { value, _ -> track = value }
+        animate(0f, 1f, animationSpec = tween(900, easing = EaseInOutCubic)) { value, _ -> sweep = value }
+        delay(60)
+        animate(0f, 1f, animationSpec = tween(250, easing = EaseOutCubic)) { value, _ ->
+            track = 0.1f * (1f - value)
+            loader = 1f - value
+        }
+        track = 0f
+        loader = 0f
+        coroutineScope {
+            launch {
+                animate(0.85f, 1f, animationSpec = tween(400, easing = SegmentOvershoot)) { value, _ ->
+                    markScale = value
+                }
+            }
+            launch {
+                animate(0f, 1f, animationSpec = tween(180, easing = CssEase)) { value, _ -> markAlpha = value }
+            }
+            launch { fadeSegment(0) { yellow = it } }
+            launch { fadeSegment(60) { cyan = it } }
+            launch { fadeSegment(120) { orange = it } }
+            launch { fadeSegment(180) { navy = it } }
+            delay(420)
+        }
+        animate(0f, 1f, animationSpec = tween(700, easing = EaseInOutCubic)) { value, _ -> wipe = value }
         delay(200)
-        phase = 2
-        delay(710)
-        phase = 3
-        delay(110)
-        phase = 4
-        delay(110)
-        phase = 5
-        delay(110)
-        phase = 6
-        delay(580)
-        phase = 7
-        delay(250)
-        phase = 8
-        delay(700)
-        phase = 9
-        delay(200)
-        phase = 10
-        delay(700)
+        animate(0f, 1f, animationSpec = tween(700, easing = EaseInOutCubic)) { value, _ -> shimmer = value }
+        shimmer = 0f
+        delay(600)
         onFinished()
     }
 
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(NightSky),
+        contentAlignment = Alignment.Center,
     ) {
-        Box(
-            Modifier
-                .fillMaxSize()
-                .alpha(if (phase >= 1) 1f else 0f)
-                .background(Brush.radialGradient(listOf(Sage.copy(alpha = 0.15f), Color.Transparent))),
-        )
-        Box(
-            Modifier
-                .fillMaxSize()
-                .alpha(if (phase >= 1) 1f else 0f)
-                .background(Brush.radialGradient(listOf(Amber.copy(alpha = 0.09f), Color.Transparent))),
-        )
+        val wordWidth = minOf(300.dp, maxWidth * 0.64f)
         Column(
-            modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(24.dp),
         ) {
-            Spacer(Modifier.weight(1f))
-            Mark(phase)
-            DividerLine(visible = phase >= 7)
-            Wordmark(visible = phase >= 8)
-            Tagline(visible = phase >= 9)
-            Spacer(Modifier.weight(1f))
-        }
-        Footer(
-            visible = phase >= 10,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 48.dp),
-        )
-    }
-}
-
-@Composable
-private fun Mark(phase: Int) {
-    val ringAlpha by animateFloatAsState(if (phase >= 1) 0.7f else 0f, tween(450), label = "ring")
-    val seedScale by animateFloatAsState(if (phase >= 2) 1f else 0.01f, tween(650), label = "seed")
-    val seedAlpha by animateFloatAsState(if (phase >= 3) 0f else 1f, tween(250), label = "seedFade")
-    Box(Modifier.size(164.dp), contentAlignment = Alignment.Center) {
-        Box(
-            Modifier
-                .size(160.dp)
-                .alpha(ringAlpha)
-                .clip(CircleShape)
-                .background(Contrast),
-        )
-        Box(
-            Modifier
-                .size(140.dp * seedScale)
-                .alpha(seedAlpha)
-                .clip(CircleShape)
-                .background(Amber),
-        )
-        Box(Modifier.size(140.dp)) {
-            Segment(R.drawable.ic_seg_yellow, phase >= 3)
-            Segment(R.drawable.ic_seg_cyan, phase >= 4)
-            Segment(R.drawable.ic_seg_orange, phase >= 5)
-            Segment(R.drawable.ic_seg_navy, phase >= 6)
+            Box(Modifier.size(96.dp), contentAlignment = Alignment.Center) {
+                LoaderRing(track = track, sweep = sweep, loader = loader)
+                Box(
+                    Modifier
+                        .size(96.dp)
+                        .graphicsLayer {
+                            scaleX = markScale
+                            scaleY = markScale
+                            alpha = markAlpha
+                        },
+                ) {
+                    Segment(R.drawable.ic_seg_yellow, yellow)
+                    Segment(R.drawable.ic_seg_cyan, cyan)
+                    Segment(R.drawable.ic_seg_orange, orange)
+                    Segment(R.drawable.ic_seg_navy, navy)
+                }
+            }
+            GoldWordmark(
+                wipe = wipe,
+                shimmer = shimmer,
+                modifier = Modifier
+                    .width(wordWidth)
+                    .height(48.dp),
+            )
         }
     }
 }
 
 @Composable
-private fun Segment(drawable: Int, visible: Boolean) {
-    val alpha by animateFloatAsState(
-        if (visible) 1f else 0f,
-        spring(dampingRatio = 0.55f),
-        label = "segAlpha",
-    )
-    val scale by animateFloatAsState(
-        if (visible) 1f else 0.55f,
-        spring(dampingRatio = 0.55f),
-        label = "segScale",
-    )
+private fun LoaderRing(track: Float, sweep: Float, loader: Float) {
+    Canvas(Modifier.fillMaxSize()) {
+        val stroke = 8f / 96f * size.minDimension
+        val radius = 35f / 96f * size.minDimension
+        val topLeft = Offset(center.x - radius, center.y - radius)
+        val arcSize = Size(radius * 2f, radius * 2f)
+        val style = Stroke(width = stroke, cap = StrokeCap.Butt)
+        if (track > 0f) {
+            drawArc(Sage.copy(alpha = track), 0f, 360f, false, topLeft, arcSize, style = style)
+        }
+        if (loader > 0f && sweep > 0f) {
+            drawArc(Amber.copy(alpha = loader), -90f, sweep * 360f, false, topLeft, arcSize, style = style)
+        }
+    }
+}
+
+@Composable
+private fun Segment(drawable: Int, alpha: Float) {
     Image(
         painter = painterResource(drawable),
         contentDescription = null,
         modifier = Modifier
             .fillMaxSize()
-            .graphicsLayer {
-                this.alpha = alpha
-                scaleX = scale
-                scaleY = scale
-            },
+            .graphicsLayer { this.alpha = alpha },
     )
 }
 
 @Composable
-private fun DividerLine(visible: Boolean) {
-    val width by animateDpAsState(if (visible) 180.dp else 0.dp, tween(550), label = "divider")
-    Box(
-        Modifier
-            .padding(top = 28.dp)
-            .width(width)
-            .height(1.dp)
-            .background(
-                Brush.horizontalGradient(
-                    listOf(Color.Transparent, Amber.copy(alpha = 0.65f), Color.Transparent),
-                ),
-            ),
-    )
-}
-
-@Composable
-private fun Wordmark(visible: Boolean) {
-    val alpha by animateFloatAsState(if (visible) 1f else 0f, spring(dampingRatio = 0.7f), label = "word")
-    val offset by animateDpAsState(if (visible) 0.dp else 40.dp, spring(dampingRatio = 0.7f), label = "wordY")
+private fun GoldWordmark(wipe: Float, shimmer: Float, modifier: Modifier) {
     Image(
-        painter = painterResource(R.drawable.monytix_wordmark),
+        painter = painterResource(R.drawable.ic_monytix_wordmark_gold),
         contentDescription = "Monytix",
         contentScale = ContentScale.Fit,
-        modifier = Modifier
-            .padding(top = 18.dp)
-            .size(width = 260.dp, height = 48.dp)
-            .offset(y = offset)
-            .alpha(alpha),
+        modifier = modifier.drawWithContent {
+            val revealed = size.width * wipe.coerceIn(0f, 1f)
+            clipRect(right = revealed) {
+                this@drawWithContent.drawContent()
+                if (shimmer > 0f) {
+                    val start = size.width * ((-80f + shimmer * 260f) / 100f)
+                    val end = size.width * ((-20f + shimmer * 260f) / 100f)
+                    drawRect(
+                        brush = Brush.horizontalGradient(
+                            0f to Color.Transparent,
+                            0.45f to Color.Transparent,
+                            0.5f to Color.White.copy(alpha = 0.45f),
+                            0.55f to Color.Transparent,
+                            1f to Color.Transparent,
+                            startX = start,
+                            endX = end,
+                        ),
+                        blendMode = BlendMode.SrcAtop,
+                    )
+                }
+            }
+        },
     )
 }
 
-@Composable
-private fun Tagline(visible: Boolean) {
-    val theme = LocalBusinessTheme.current
-    val alpha by animateFloatAsState(if (visible) 1f else 0f, tween(600), label = "tag")
-    Text(
-        text = "ADAPTIVE FINANCIAL INTELLIGENCE",
-        color = Sage.copy(alpha = 0.85f),
-        fontFamily = theme.fontFamily,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 11.sp,
-        letterSpacing = 2.5.sp,
-        modifier = Modifier
-            .padding(top = 14.dp)
-            .alpha(alpha),
-    )
+private suspend fun fadeSegment(startDelay: Long, set: (Float) -> Unit) {
+    delay(startDelay)
+    animate(0f, 1f, animationSpec = tween(220, easing = CssEase)) { value, _ -> set(value) }
 }
 
 @Composable
-private fun Footer(visible: Boolean, modifier: Modifier) {
-    val theme = LocalBusinessTheme.current
-    val alpha by animateFloatAsState(if (visible) 1f else 0f, tween(500), label = "foot")
-    Text(
-        text = "INDIA'S DECISION LAYER FOR MONEY",
-        color = Amber.copy(alpha = 0.55f),
-        fontFamily = theme.fontFamily,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 9.sp,
-        letterSpacing = 2.8.sp,
-        modifier = modifier.alpha(alpha),
-    )
+private fun animatorScale(): Float {
+    val context = LocalContext.current
+    return Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
 }

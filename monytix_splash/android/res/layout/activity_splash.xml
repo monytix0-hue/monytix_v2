@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- activity_splash.xml — branded reveal on all API levels (HTML O-mark motion) -->
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/splash_background">
+
+    <!-- O-MARK wrap (contrast ring + seed + segments) -->
+    <FrameLayout
+        android:id="@+id/omarkContainer"
+        android:layout_width="164dp"
+        android:layout_height="164dp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/divider"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintVertical_chainStyle="packed"
+        app:layout_constraintVertical_bias="0.42">
+
+        <!-- Contrast ring (HTML: #111D2B @ 0.7) -->
+        <View
+            android:id="@+id/contrastRing"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/ic_contrast_ring"
+            android:alpha="0" />
+
+        <!-- Amber seed — blooms to full O, then fades -->
+        <View
+            android:id="@+id/seedDot"
+            android:layout_width="140dp"
+            android:layout_height="140dp"
+            android:layout_gravity="center"
+            android:background="@drawable/ic_seed_dot"
+            android:alpha="1"
+            android:scaleX="0.01"
+            android:scaleY="0.01" />
+
+        <!-- Segments (140dp, centered over seed) -->
+        <FrameLayout
+            android:layout_width="140dp"
+            android:layout_height="140dp"
+            android:layout_gravity="center">
+            <ImageView android:id="@+id/segYellow" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/ic_seg_yellow" android:contentDescription="@null" android:alpha="0" android:scaleX="0.55" android:scaleY="0.55" />
+            <ImageView android:id="@+id/segCyan"   android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/ic_seg_cyan" android:contentDescription="@null" android:alpha="0" android:scaleX="0.55" android:scaleY="0.55" />
+            <ImageView android:id="@+id/segOrange" android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/ic_seg_orange" android:contentDescription="@null" android:alpha="0" android:scaleX="0.55" android:scaleY="0.55" />
+            <ImageView android:id="@+id/segNavy"   android:layout_width="match_parent" android:layout_height="match_parent" android:src="@drawable/ic_seg_navy" android:contentDescription="@null" android:alpha="0" android:scaleX="0.55" android:scaleY="0.55" />
+        </FrameLayout>
+    </FrameLayout>
+
+    <!-- Divider -->
+    <View
+        android:id="@+id/divider"
+        android:layout_width="180dp"
+        android:layout_height="1dp"
+        android:layout_marginTop="24dp"
+        android:background="@drawable/divider_gold_gradient"
+        app:layout_constraintTop_toBottomOf="@id/omarkContainer"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/wordmark" />
+
+    <!-- Wordmark -->
+    <ImageView
+        android:id="@+id/wordmark"
+        android:layout_width="260dp"
+        android:layout_height="48dp"
+        android:layout_marginTop="18dp"
+        android:src="@drawable/ic_monytix_wordmark"
+        android:contentDescription="@null"
+        app:layout_constraintTop_toBottomOf="@id/divider"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/tagline" />
+
+    <!-- Tagline -->
+    <TextView
+        android:id="@+id/tagline"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:text="Adaptive Financial Intelligence"
+        android:textColor="#D98ABC9E"
+        android:textSize="11sp"
+        android:letterSpacing="0.18"
+        android:textAllCaps="true"
+        android:fontFamily="@font/inter_medium"
+        app:layout_constraintTop_toBottomOf="@id/wordmark"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Category -->
+    <TextView
+        android:id="@+id/category"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="48dp"
+        android:text="India's Decision Layer for Money"
+        android:textColor="#66C4956A"
+        android:textSize="9sp"
+        android:letterSpacing="0.22"
+        android:textAllCaps="true"
+        android:fontFamily="@font/inter_semibold"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+</androidx.constraintlayout.widget.ConstraintLayout>

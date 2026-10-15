@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from "fastify";
+import secureJsonParse from "secure-json-parse";
 import { accountsRoutes } from "./accounts/index.js";
 import { authRoutes } from "./auth/index.js";
 import { registerAuthGuard, type AuthConfig } from "./auth/guard.js";
@@ -91,6 +92,21 @@ export async function buildApp(options: BuildOptions = {}): Promise<FastifyInsta
       }
       return randomUUID();
     },
+  });
+  app.removeContentTypeParser("application/json");
+  app.addContentTypeParser("application/json", { parseAs: "string" }, (_request, body, done) => {
+    const text = typeof body === "string" ? body : "";
+    if (text.length === 0) {
+      done(null, null);
+      return;
+    }
+    try {
+      done(null, secureJsonParse(text, { protoAction: "error", constructorAction: "error" }));
+    } catch {
+      const error = new Error("Invalid JSON") as Error & { statusCode: number };
+      error.statusCode = 400;
+      done(error, undefined);
+    }
   });
   app.addHook("onSend", async (request, reply) => {
     reply.header("x-request-id", request.id);

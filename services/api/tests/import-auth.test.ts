@@ -10,6 +10,24 @@ const body = {
   original_filename: "statement.csv",
 };
 
+test("POST /v1/imports/:id/complete accepts an empty JSON body", async () => {
+  const { token, options } = await signToken({ subject: "import-user", expiresIn: "1h" });
+  const app = await buildApp(options);
+  const response = await app.inject({
+    method: "POST",
+    url: "/v1/imports/import-1/complete",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    payload: "",
+  });
+  assert.notEqual(response.statusCode, 400);
+  assert.equal(response.json().code, undefined);
+  assert.equal(response.body.includes("FST_ERR_CTP_EMPTY_JSON_BODY"), false);
+  await app.close();
+});
+
 test("POST /v1/imports rejects a missing token", async () => {
   const app = await anonymousApp();
   const response = await app.inject({

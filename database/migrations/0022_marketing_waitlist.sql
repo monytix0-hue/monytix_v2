@@ -27,4 +27,18 @@ CREATE INDEX waitlist_registration_created_idx
 GRANT USAGE ON SCHEMA marketing TO monytix_api;
 GRANT INSERT ON marketing.waitlist_registration TO monytix_api;
 
+INSERT INTO ops.schema_migration (migration_code, migration_name, architecture_version, checksum_hint, notes)
+VALUES (
+    'MARKETING-WAITLIST',
+    'Marketing waitlist and contact registrations',
+    'site-v0.1',
+    'marketing-waitlist-registration',
+    'The public site may insert a registration. It cannot read or update the table.'
+)
+ON CONFLICT (migration_code) DO UPDATE
+SET migration_name = EXCLUDED.migration_name,
+    architecture_version = EXCLUDED.architecture_version,
+    checksum_hint = EXCLUDED.checksum_hint,
+    notes = EXCLUDED.notes;
+
 COMMIT;

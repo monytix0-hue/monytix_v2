@@ -7,6 +7,7 @@ import { createImportStore } from "./imports/store.js";
 import { pingScanner } from "./imports/scan.js";
 import { createObjectStorage, storageConfigFromEnv } from "./imports/storage.js";
 import { createPgGmailStore } from "./gmail/pg-store.js";
+import { createPgGmailConnectStore } from "./gmail/connect-store.js";
 import { verifyGoogleOidc } from "./gmail/oidc.js";
 
 const port = Number(process.env.PORT ?? 8080);
@@ -54,6 +55,14 @@ const app = await buildApp({
       publicKeyPem: process.env.GMAIL_PUBSUB_OIDC_PUBLIC_KEY?.trim() ?? "",
       serviceAccountEmail: process.env.GMAIL_PUBSUB_PUSH_SERVICE_ACCOUNT?.trim() || undefined,
     }),
+  },
+  gmailConnect: {
+    store: databaseUrl.length > 0 ? createPgGmailConnectStore(databaseUrl) : null,
+    clientId: process.env.GMAIL_CLIENT_ID?.trim() ?? "",
+    clientSecret: process.env.GMAIL_CLIENT_SECRET?.trim() ?? "",
+    redirectUri: process.env.GMAIL_REDIRECT_URI?.trim() ?? "",
+    tokenUri: process.env.GMAIL_TOKEN_URI?.trim() ?? "",
+    encryptionKey: process.env.GMAIL_TOKEN_ENCRYPTION_KEY?.trim() ?? "",
   },
 });
 

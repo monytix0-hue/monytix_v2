@@ -62,6 +62,8 @@ for file in $(find /database/migrations -maxdepth 1 -type f -name '*.sql' | sort
     0021_canonical_current_date_index.sql) code="M3-20-CURRENT-DATE-INDEX" ;;
     0022_marketing_waitlist.sql) code="MARKETING-WAITLIST" ;;
     0023_gmail_ingest.sql) code="GMAIL-INGEST-FOUNDATION" ;;
+    0024_personal_owner.sql) code="PERSONAL-OWNER" ;;
+    0025_gmail_oauth.sql) code="GMAIL-OAUTH-CONNECT" ;;
     *) code="" ;;
   esac
 

@@ -39,7 +39,7 @@ export function registerAuthGuard(
         email: verified.email,
       });
       const requestedOwner = headerValue(request.headers[ownerHeader]);
-      const ownerId = await identity.resolveOwner(actor.actorId, requestedOwner);
+      const ownerId = await identity.resolveOwner(actor.actorId, requestedOwner, verified.email);
       request.actorId = actor.actorId;
       request.ownerId = ownerId;
     } catch (error) {
@@ -57,7 +57,7 @@ export function registerAuthGuard(
 
 function isPublic(url: string): boolean {
   const path = url.split("?")[0];
-  return path === "/platform/health" || path === "/platform/ready" || path === "/gmail/webhook";
+  return path === "/platform/health" || path === "/platform/ready" || path === "/gmail/webhook" || path === "/gmail/oauth/callback";
 }
 
 function bearerToken(header: string | undefined): string | null {

@@ -3,7 +3,7 @@ import { AuthError } from "./errors.js";
 
 export type IdentityStore = {
   provisionActor(input: { subject: string; email: string | null }): Promise<{ actorId: string }>;
-  resolveOwner(actorId: string, requestedOwnerId: string | null): Promise<string | null>;
+  resolveOwner(actorId: string, requestedOwnerId: string | null, email?: string | null): Promise<string | null>;
   ping(): Promise<void>;
   close(): Promise<void>;
 };
@@ -24,7 +24,7 @@ export function createPgIdentity(databaseUrl: string): IdentityStore {
       return { actorId };
     },
 
-    async resolveOwner(actorId, requestedOwnerId) {
+    async resolveOwner(actorId, requestedOwnerId, email = null) {
       if (requestedOwnerId) {
         const allowed = await pool.query<{ actor_can_access_owner: boolean }>(
           "SELECT ops.actor_can_access_owner($1, $2)",
@@ -40,7 +40,20 @@ export function createPgIdentity(databaseUrl: string): IdentityStore {
         "SELECT ops.default_owner_for_actor($1)",
         [actorId],
       );
-      return result.rows[0]?.default_owner_for_actor ?? null;
+      const existing = result.rows[0]?.default_owner_for_actor ?? null;
+      if (existing) {
+        return existing;
+      }
+
+      const ensured = await pool.query<{ ensure_personal_owner: string }>(
+        "SELECT ops.ensure_personal_owner($1, $2)",
+        [actorId, email],
+      );
+      const ownerId = ensured.rows[0]?.ensure_personal_owner;
+      if (!ownerId) {
+        throw new AuthError(503, "auth_unconfigured");
+      }
+      return ownerId;
     },
 
     async ping() {

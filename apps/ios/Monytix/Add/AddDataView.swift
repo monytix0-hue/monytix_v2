@@ -36,10 +36,12 @@ struct AddSheetsView: View {
     let onViewTransactions: () -> Void
 
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.openURL) private var openURL
     @State private var chosen: ChosenFile?
     @State private var status = ImportStatus()
     @State private var attempt = 0
     @State private var picking = false
+    @State private var gmailNote: String?
 
     private var palette: PersonalPalette { colorScheme == .dark ? PersonalTokens.dark : PersonalTokens.light }
 
@@ -99,9 +101,20 @@ struct AddSheetsView: View {
         switch step {
         case .sources:
             sourceRow("Bank statement", "PDF or CSV") { onStep(.upload) }
-            sourceRow("Gmail", unavailable, action: nil)
+            sourceRow("Gmail", "Connect") {
+                Task {
+                    if let url = await gmailConnectURL() {
+                        openURL(url)
+                        gmailNote = nil
+                    } else {
+                        gmailNote = unavailable
+                    }
+                }
+            }
             sourceRow("Account Aggregator", "Coming soon", action: nil)
-            Text("Gmail does not connect from here.").personalText(.secondary, size: 13)
+            if let gmailNote {
+                Text(gmailNote).personalText(.secondary, size: 13)
+            }
         case .upload:
             Button { picking = true } label: {
                 VStack(spacing: PersonalSpace.s8) {
@@ -138,6 +151,18 @@ struct AddSheetsView: View {
             }
             outlined("Use Offline Mode", onClose)
         }
+    }
+
+    private func gmailConnectURL() async -> URL? {
+        let response = await api.submit(method: "GET", path: "/gmail/oauth/start", body: nil, idempotencyKey: nil, token: token)
+        guard (200..<300).contains(response.status),
+              let data = response.data,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let text = json["url"] as? String,
+              let url = URL(string: text), !text.isEmpty else {
+            return nil
+        }
+        return url
     }
 
     private func sourceRow(_ title: String, _ line: String, action: (() -> Void)?) -> some View {

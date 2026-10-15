@@ -1,5 +1,6 @@
 package com.monytix.app.add
 
+import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -34,6 +35,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,6 +49,7 @@ import com.monytix.app.auth.MonytixApi
 import com.monytix.app.theme.LocalPersonalTheme
 import com.monytix.app.theme.PersonalRadius
 import com.monytix.app.theme.PersonalSpace
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.security.MessageDigest
 import java.util.UUID
@@ -93,6 +96,8 @@ fun AddSheets(
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         chosen = uri?.let { readStatement(context, it) }
     }
+    val scope = rememberCoroutineScope()
+    var gmailNote by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(step, attempt) {
         val file = chosen
         if (step != AddStep.Processing || file == null) return@LaunchedEffect
@@ -121,7 +126,15 @@ fun AddSheets(
                 }
             }
             when (step) {
-                AddStep.Sources -> SourcesBody(onStatement = { onStep(AddStep.Upload) })
+                AddStep.Sources -> SourcesBody(
+                    onStatement = { onStep(AddStep.Upload) },
+                    onGmail = {
+                        scope.launch {
+                            gmailNote = if (openGmail(api, token, context)) null else Unavailable
+                        }
+                    },
+                    gmailNote = gmailNote,
+                )
                 AddStep.Upload -> UploadBody(
                     chosen = chosen,
                     onPick = { picker.launch(arrayOf("application/pdf", "text/csv", "text/comma-separated-values")) },
@@ -147,12 +160,27 @@ private fun title(step: AddStep) = when (step) {
 }
 
 @Composable
-private fun SourcesBody(onStatement: () -> Unit) {
+private fun SourcesBody(onStatement: () -> Unit, onGmail: () -> Unit, gmailNote: String?) {
     val theme = LocalPersonalTheme.current
     SourceRow("Bank statement", "PDF or CSV", onStatement)
-    SourceRow("Gmail", Unavailable, null)
+    SourceRow("Gmail", "Connect", onGmail)
     SourceRow("Account Aggregator", "Coming soon", null)
-    Text("Gmail does not connect from here.", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+    if (gmailNote != null) {
+        Text(gmailNote, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+    }
+}
+
+private suspend fun openGmail(
+    api: MonytixApi,
+    token: suspend (Boolean) -> String?,
+    context: android.content.Context,
+): Boolean {
+    val response = api.submit("GET", "/gmail/oauth/start", null, null, token)
+    if (response.status !in 200..299) return false
+    val url = JSONObject(response.text ?: return false).optString("url")
+    if (url.isBlank()) return false
+    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+    return true
 }
 
 @Composable

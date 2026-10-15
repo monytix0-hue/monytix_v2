@@ -1,4 +1,6 @@
-import { importSPKI, jwtVerify } from "jose";
+import { createRemoteJWKSet, importSPKI, jwtVerify, type JWTVerifyGetKey } from "jose";
+
+const googleCerts = createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));
 
 export class OidcError extends Error {
   constructor() {
@@ -12,7 +14,9 @@ export async function verifyGoogleOidc(
   options: { audience: string; publicKeyPem: string; serviceAccountEmail?: string },
 ): Promise<{ subject: string; email: string }> {
   try {
-    const key = await importSPKI(options.publicKeyPem, "RS256");
+    const key: JWTVerifyGetKey | CryptoKey = options.publicKeyPem.trim().length > 0
+      ? await importSPKI(options.publicKeyPem, "RS256")
+      : googleCerts;
     const { payload } = await jwtVerify(token, key, {
       audience: options.audience,
       issuer: ["https://accounts.google.com", "accounts.google.com"],

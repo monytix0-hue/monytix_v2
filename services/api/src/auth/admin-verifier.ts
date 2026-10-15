@@ -53,15 +53,18 @@ export function createAdminTokenVerifier(options: {
 export function isRequestAuthConfigured(env: NodeJS.ProcessEnv): boolean {
   const projectId = env.FIREBASE_PROJECT_ID?.trim() ?? "";
   const credentials = env.GOOGLE_APPLICATION_CREDENTIALS?.trim() ?? "";
-  return projectId.length > 0 && credentials.length > 0;
+  const inline = env.GOOGLE_CREDENTIALS_JSON?.trim() ?? "";
+  return projectId.length > 0 && (credentials.length > 0 || inline.length > 0);
 }
 
 export async function createLiveAdminVerifier(env: NodeJS.ProcessEnv = process.env): Promise<TokenVerifier> {
   const projectId = env.FIREBASE_PROJECT_ID?.trim() ?? "";
-  const { applicationDefault, getApps, initializeApp } = await import("firebase-admin/app");
+  const { applicationDefault, cert, getApps, initializeApp } = await import("firebase-admin/app");
   const { getAuth } = await import("firebase-admin/auth");
   if (getApps().length === 0) {
-    initializeApp({ credential: applicationDefault(), projectId });
+    const inline = env.GOOGLE_CREDENTIALS_JSON?.trim() ?? "";
+    const credential = inline.length > 0 ? cert(JSON.parse(inline) as { projectId?: string; privateKey?: string; clientEmail?: string }) : applicationDefault();
+    initializeApp({ credential, projectId });
   }
   return createAdminTokenVerifier({
     projectId,

@@ -95,6 +95,13 @@ test("request auth ignores the local PEM key", () => {
     }),
     true,
   );
+  assert.equal(
+    isRequestAuthConfigured({
+      FIREBASE_PROJECT_ID: projectId,
+      GOOGLE_CREDENTIALS_JSON: "{\"type\":\"service_account\"}",
+    }),
+    true,
+  );
 });
 
 test("the API process does not verify requests with the local jose key", () => {

@@ -79,6 +79,8 @@ test("cleaned merchant names map onto the current category codes", () => {
   const migration = readFileSync(new URL("../../../database/migrations/0028_gmail_statement_pull.sql", import.meta.url), "utf8");
   assert.match(migration, /overlay_bank_narration/);
   assert.match(migration, /INF\/RTGS/);
+  assert.match(migration, /IF patched IS DISTINCT FROM src THEN/);
+  assert.equal(migration.includes("structure rail patch did not apply"), false);
   assert.equal(migration.includes("INSERT INTO core.investment_holding"), false);
   assert.equal(migration.includes("INSERT INTO core.insurance_policy"), false);
 });

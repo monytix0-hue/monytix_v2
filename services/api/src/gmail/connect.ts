@@ -37,7 +37,10 @@ export const gmailConnectRoutes: FastifyPluginAsync<GmailConnectOptions> = async
     if (!ready(options)) {
       return reply.status(503).send({ error: "unavailable" });
     }
-    return reply.send({ url: await issueAuthorizeUrl(options, request.ownerId) });
+    return reply.send({
+      url: await issueAuthorizeUrl(options, request.ownerId),
+      server_client_id: options.clientId,
+    });
   });
 
   app.post("/v1/gmail/connect", async (request, reply) => {
@@ -51,6 +54,42 @@ export const gmailConnectRoutes: FastifyPluginAsync<GmailConnectOptions> = async
       return reply.status(503).send({ error: "unavailable" });
     }
     return reply.send({ authorization_url: await issueAuthorizeUrl(options, request.ownerId) });
+  });
+
+  app.post("/v1/gmail/connect/code", async (request, reply) => {
+    if (!request.actorId) {
+      return reply.status(401).send({ error: "unauthorized" });
+    }
+    if (!request.ownerId) {
+      return reply.status(403).send({ error: "owner_forbidden" });
+    }
+    if (!ready(options)) {
+      return reply.status(503).send({ error: "unavailable" });
+    }
+    const code = readServerCode(request.body);
+    if (!code) {
+      return reply.status(400).send({ error: "invalid_request" });
+    }
+    try {
+      const exchanged = await (options.exchange ?? exchangeGoogleCode)({
+        code,
+        clientId: options.clientId,
+        clientSecret: options.clientSecret,
+        redirectUri: "",
+        tokenUri: options.tokenUri.trim() || defaultTokenUri,
+      });
+      const ciphertext = sealCredential(exchanged.refreshToken, options.encryptionKey);
+      await options.store!.saveConnection({
+        ownerId: request.ownerId,
+        mailbox: exchanged.email,
+        credentialRef: credentialPointer(),
+        ciphertext,
+      });
+    } catch (error) {
+      const missingRefresh = error instanceof GmailExchangeError && error.reason === "refresh_token";
+      return reply.status(422).send({ error: missingRefresh ? "refresh_token" : "exchange" });
+    }
+    return reply.send({ connected: true });
   });
 
   app.get("/gmail/oauth/callback", async (request, reply) => {
@@ -119,6 +158,24 @@ function authorizeUrl(options: GmailConnectOptions, state: string): string {
   return url.toString();
 }
 
+export class GmailExchangeError extends Error {
+  readonly reason: "refresh_token" | "exchange";
+
+  constructor(reason: "refresh_token" | "exchange") {
+    super(reason);
+    this.name = "GmailExchangeError";
+    this.reason = reason;
+  }
+}
+
+function readServerCode(body: unknown): string {
+  if (!body || typeof body !== "object") {
+    return "";
+  }
+  const code = (body as { code?: unknown }).code;
+  return typeof code === "string" ? code.trim() : "";
+}
+
 export async function exchangeGoogleCode(input: {
   code: string;
   clientId: string;
@@ -138,13 +195,16 @@ export async function exchangeGoogleCode(input: {
     }),
   });
   if (!response.ok) {
-    throw new Error("token_exchange_failed");
+    throw new GmailExchangeError("exchange");
   }
   const json = await response.json() as { refresh_token?: unknown; id_token?: unknown };
   const refreshToken = typeof json.refresh_token === "string" ? json.refresh_token : "";
   const email = emailFromIdToken(typeof json.id_token === "string" ? json.id_token : "");
-  if (!refreshToken || !email) {
-    throw new Error("token_exchange_failed");
+  if (!refreshToken) {
+    throw new GmailExchangeError("refresh_token");
+  }
+  if (!email) {
+    throw new GmailExchangeError("exchange");
   }
   return { refreshToken, email };
 }

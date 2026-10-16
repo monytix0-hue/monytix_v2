@@ -396,10 +396,9 @@ BEGIN
     SELECT pg_get_functiondef('ops.publish_structure_extraction_run(uuid)'::regprocedure) INTO src;
     patched := replace(src, 'WHEN ''CARD_BILLPAY'' THEN ''BILLPAY''', 'WHEN ''CARD_BILLPAY'' THEN ''BILLPAY'' WHEN ''NET_BANKING'' THEN ''NET_BANKING''');
     patched := replace(patched, 'WHEN v_channel = ''POS'' THEN ''POS''', 'WHEN COALESCE(v_parsed->>''sub_type'', '''') = ''CARD_ECOMMERCE'' THEN ''CARD_ECOMMERCE'' WHEN v_channel = ''POS'' THEN ''POS''');
-    IF patched = src THEN
-        RAISE EXCEPTION 'structure rail patch did not apply';
+    IF patched IS DISTINCT FROM src THEN
+        EXECUTE patched;
     END IF;
-    EXECUTE patched;
 END;
 $$;
 

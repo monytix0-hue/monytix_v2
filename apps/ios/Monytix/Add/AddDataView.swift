@@ -1,6 +1,17 @@
 import CryptoKit
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
+
+#if canImport(GoogleSignIn)
+import GoogleSignIn
+#endif
+
+private enum GmailAccountResult {
+    case code(String)
+    case cancelled
+    case failed
+}
 
 enum AddStep: Equatable {
     case sources
@@ -36,7 +47,6 @@ struct AddSheetsView: View {
     let onViewTransactions: () -> Void
 
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.openURL) private var openURL
     @State private var chosen: ChosenFile?
     @State private var status = ImportStatus()
     @State private var attempt = 0
@@ -103,14 +113,7 @@ struct AddSheetsView: View {
         case .sources:
             sourceRow("Bank statement", "PDF or CSV") { onStep(.upload) }
             sourceRow("Gmail", "Connect") {
-                Task {
-                    if let url = await gmailConnectURL() {
-                        openURL(url)
-                        gmailNote = nil
-                    } else {
-                        gmailNote = unavailable
-                    }
-                }
+                Task { await connectGmail() }
             }
             sourceRow("Account Aggregator", "Coming soon", action: nil)
             if let gmailNote {
@@ -157,16 +160,91 @@ struct AddSheetsView: View {
         }
     }
 
-    private func gmailConnectURL() async -> URL? {
+    private func connectGmail() async {
+        guard let serverClientID = await gmailServerClientID() else {
+            gmailNote = unavailable
+            return
+        }
+        switch await presentGmailAccounts(serverClientID: serverClientID) {
+        case .cancelled:
+            break
+        case .failed:
+            gmailNote = unavailable
+        case .code(let code):
+            let body = try? JSONSerialization.data(withJSONObject: ["code": code])
+            let response = await api.submit(method: "POST", path: "/v1/gmail/connect/code", body: body, idempotencyKey: nil, token: token)
+            gmailNote = (200..<300).contains(response.status) ? nil : unavailable
+        }
+    }
+
+    private func gmailServerClientID() async -> String? {
         let response = await api.submit(method: "GET", path: "/gmail/oauth/start", body: nil, idempotencyKey: nil, token: token)
         guard (200..<300).contains(response.status),
               let data = response.data,
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let text = json["url"] as? String,
-              let url = URL(string: text), !text.isEmpty else {
+              let clientID = json["server_client_id"] as? String,
+              !clientID.isEmpty else {
             return nil
         }
-        return url
+        return clientID
+    }
+
+    @MainActor
+    private func presentGmailAccounts(serverClientID: String) async -> GmailAccountResult {
+        #if canImport(GoogleSignIn)
+        guard let iosClientID = iosGoogleClientID(),
+              let controller = presentingController() else {
+            return .failed
+        }
+        let previous = GIDSignIn.sharedInstance.configuration
+        GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: iosClientID, serverClientID: serverClientID)
+        defer {
+            GIDSignIn.sharedInstance.configuration = previous ?? GIDConfiguration(clientID: iosClientID)
+        }
+        do {
+            let result = try await GIDSignIn.sharedInstance.signIn(
+                withPresenting: controller,
+                hint: nil,
+                additionalScopes: ["https://www.googleapis.com/auth/gmail.readonly"]
+            )
+            guard let code = result.serverAuthCode, !code.isEmpty else {
+                return .failed
+            }
+            return .code(code)
+        } catch {
+            let nsError = error as NSError
+            if nsError.domain == kGIDSignInErrorDomain && nsError.code == GIDSignInError.Code.canceled.rawValue {
+                return .cancelled
+            }
+            return .failed
+        }
+        #else
+        _ = serverClientID
+        return .failed
+        #endif
+    }
+
+    private func iosGoogleClientID() -> String? {
+        guard let url = Bundle.main.url(forResource: "GoogleService-Info", withExtension: "plist"),
+              let data = try? Data(contentsOf: url),
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let clientID = plist["CLIENT_ID"] as? String,
+              !clientID.isEmpty else {
+            return nil
+        }
+        return clientID
+    }
+
+    private func presentingController() -> UIViewController? {
+        let window = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow)
+        var controller = window?.rootViewController
+        while let presented = controller?.presentedViewController {
+            controller = presented
+        }
+        return controller
     }
 
     private func sourceRow(_ title: String, _ line: String, action: (() -> Void)?) -> some View {

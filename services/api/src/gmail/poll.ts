@@ -30,6 +30,7 @@ export type PollConnection = {
   actorId: string;
   refreshToken: string;
   historyCheckpoint: string | null;
+  initialWindowDrained: boolean;
 };
 
 export type PollPorts = {
@@ -70,6 +71,7 @@ export type PollPorts = {
     etag: string;
   }) => Promise<void>;
   setCheckpoint: (checkpoint: string) => Promise<void>;
+  markWindowDrained: () => Promise<void>;
 };
 
 export type PollResult = { stored: number; skipped: number };
@@ -82,6 +84,11 @@ function addPoll(left: PollResult, right: PollResult): PollResult {
 
 export async function pollConnection(connection: PollConnection, ports: PollPorts): Promise<PollResult> {
   const accessToken = await refreshAccessToken(connection.refreshToken, ports);
+  if (!connection.initialWindowDrained) {
+    const totals = await searchMailbox(connection, accessToken, ports);
+    await ports.markWindowDrained();
+    return totals;
+  }
   if (connection.historyCheckpoint) {
     const history = await listHistory(accessToken, connection.historyCheckpoint, ports.fetchImpl);
     if (history.expired) {
@@ -104,11 +111,11 @@ export async function pollConnection(connection: PollConnection, ports: PollPort
 
 async function searchMailbox(connection: PollConnection, accessToken: string, ports: PollPorts): Promise<PollResult> {
   let totals = emptyPoll;
-  const attachments = await listMessages(accessToken, attachmentQuery, ports.fetchImpl);
+  const attachments = await listAllMatchingMessages(ports.fetchImpl, accessToken, attachmentQuery);
   for (const messageId of attachments) {
     totals = addPoll(totals, await readMessage(connection, accessToken, messageId, true, ports));
   }
-  const reminders = await listMessages(accessToken, reminderQuery, ports.fetchImpl);
+  const reminders = await listAllMatchingMessages(ports.fetchImpl, accessToken, reminderQuery);
   for (const messageId of reminders) {
     totals = addPoll(totals, await readMessage(connection, accessToken, messageId, false, ports));
   }
@@ -301,17 +308,36 @@ async function listHistory(
   };
 }
 
-async function listMessages(accessToken: string, query: string, fetchImpl: PollFetch): Promise<string[]> {
-  const url = `${gmailApi}/messages?maxResults=50&q=${encodeURIComponent(query)}`;
-  const payload = await gmailJson(accessToken, url, fetchImpl);
-  const messages = payload && typeof payload === "object" ? (payload as { messages?: unknown }).messages : null;
-  if (!Array.isArray(messages)) {
-    return [];
-  }
-  return messages.flatMap((row) => {
-    const id = row && typeof row === "object" ? textField(row, "id") : null;
-    return id ? [id] : [];
-  });
+export async function listAllMatchingMessages(fetchImpl: PollFetch, accessToken: string, query: string): Promise<string[]> {
+  const messageIds: string[] = [];
+  let pageToken: string | undefined;
+  do {
+    const url = new URL(`${gmailApi}/messages`);
+    url.searchParams.set("q", query);
+    url.searchParams.set("maxResults", "50");
+    if (pageToken) {
+      url.searchParams.set("pageToken", pageToken);
+    }
+    const response = await fetchImpl(url.toString(), {
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    if (response.status !== 200) {
+      throw workerError("gmail search failed", `http_${response.status}`);
+    }
+    const data = await response.json();
+    const messages = data && typeof data === "object" ? (data as { messages?: unknown }).messages : null;
+    if (Array.isArray(messages)) {
+      for (const message of messages) {
+        const id = message && typeof message === "object" ? textField(message, "id") : null;
+        if (id) {
+          messageIds.push(id);
+        }
+      }
+    }
+    const next = data && typeof data === "object" ? textField(data, "nextPageToken") : null;
+    pageToken = next ?? undefined;
+  } while (pageToken);
+  return messageIds;
 }
 
 async function gmailJson(accessToken: string, url: string, fetchImpl: PollFetch): Promise<unknown> {

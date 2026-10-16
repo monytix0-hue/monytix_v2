@@ -143,6 +143,7 @@ function connection(historyCheckpoint: string | null) {
     actorId: "actor-1",
     refreshToken: "refresh-token",
     historyCheckpoint,
+    initialWindowDrained: historyCheckpoint !== null,
   };
 }
 
@@ -196,6 +197,7 @@ function ports(
     setCheckpoint: async (checkpoint) => {
       checkpoints.push(checkpoint);
     },
+    markWindowDrained: async () => undefined,
   };
 }
 

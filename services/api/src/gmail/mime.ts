@@ -46,11 +46,12 @@ export function extractMimeMessage(input: {
       texts.push({ partIndex, mimeType: mime, text: body.toString("utf8") });
       return;
     }
-    const fileType = statementTypes[mime] ?? fileTypeFromName(filenameOf(part.headers));
+    const named = filenameOf(Object.fromEntries(part.headers));
+    const fileType = statementTypes[mime] ?? fileTypeFromName(named ?? "");
     if (!fileType) {
       return;
     }
-    const filename = filenameOf(part.headers) || `statement.${fileType.toLowerCase()}`;
+    const filename = named || `statement.${fileType.toLowerCase()}`;
     handoffs.push({
       ownerId: input.ownerId,
       gmailConnectionId: input.gmailConnectionId,
@@ -121,9 +122,25 @@ function mimeType(headers: Map<string, string>): string {
   return (headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
 }
 
-function filenameOf(headers: Map<string, string>): string {
-  const source = `${headers.get("content-disposition") ?? ""} ${headers.get("content-type") ?? ""}`;
-  return source.match(/filename="?([^";]+)"?/i)?.[1]?.trim() ?? "";
+export function filenameOf(headers: Record<string, string | undefined>): string | undefined {
+  const disposition = headers["content-disposition"] ?? "";
+  const contentType = headers["content-type"] ?? "";
+  return extractParam(disposition, "filename") ?? extractParam(contentType, "name");
+}
+
+function extractParam(header: string, param: "filename" | "name"): string | undefined {
+  if (!header) {
+    return undefined;
+  }
+  const quoted = header.match(new RegExp(`${param}\\*?=["']([^"']+)["']`, "i"));
+  if (quoted?.[1]) {
+    return quoted[1].trim();
+  }
+  const unquoted = header.match(new RegExp(`${param}\\*?=([^;\\s]+)`, "i"));
+  if (unquoted?.[1]) {
+    return unquoted[1].trim();
+  }
+  return undefined;
 }
 
 function fileTypeFromName(filename: string): AttachmentHandoff["fileType"] | null {

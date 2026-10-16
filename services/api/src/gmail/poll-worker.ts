@@ -37,6 +37,7 @@ async function tick(url: string, storage: ObjectStorage, imports: ImportStore): 
       actor_id: string | null;
       history_checkpoint: string | null;
       credential_ciphertext: string;
+      initial_window_drained: boolean;
     }>("SELECT * FROM ops.list_gmail_poll_targets()");
     let stored = 0;
     let skipped = 0;
@@ -52,6 +53,7 @@ async function tick(url: string, storage: ObjectStorage, imports: ImportStore): 
           actorId,
           refreshToken: unsealCredential(row.credential_ciphertext, encryptionKey),
           historyCheckpoint: row.history_checkpoint,
+          initialWindowDrained: row.initial_window_drained === true,
         };
         const counts = await pollOne(connection, row.gmail_connection_id, row.owner_id, actorId, client, storage, imports);
         stored += counts.stored;
@@ -151,6 +153,9 @@ async function pollOne(
         },
         setCheckpoint: async (checkpoint) => {
           await client.query("SELECT ops.set_gmail_history_checkpoint($1::uuid, $2)", [connectionId, checkpoint]);
+        },
+        markWindowDrained: async () => {
+          await client.query("SELECT ops.mark_gmail_window_drained($1::uuid)", [connectionId]);
         },
   });
 }

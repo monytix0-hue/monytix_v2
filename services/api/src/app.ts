@@ -19,6 +19,8 @@ import { statementsRoutes } from "./statements/index.js";
 import type { LedgerRead } from "./ledger/read.js";
 import { ledgerRoutes } from "./ledger/routes.js";
 import { liveRoutes } from "./live/index.js";
+import type { CategoryChoiceStore } from "./transactions/category.js";
+import { createCategoryChoiceStore } from "./transactions/category.js";
 import type { ManualTransactionStore } from "./transactions/manual.js";
 import type { ImportStore } from "./imports/store.js";
 import type { ObjectStorage } from "./imports/storage.js";
@@ -32,6 +34,7 @@ export type BuildOptions = {
   auth?: AuthConfig;
   identity?: IdentityStore | null;
   manualTransactions?: ManualTransactionStore | null;
+  categoryChoices?: CategoryChoiceStore | null;
   ledger?: LedgerRead | null;
   imports?: ImportStore | null;
   objectStorage?: ObjectStorage | null;
@@ -119,6 +122,9 @@ export async function buildApp(options: BuildOptions = {}): Promise<FastifyInsta
   } };
   const identity = options.identity ?? null;
   const manualTransactions = options.manualTransactions ?? null;
+  const categoryChoices = options.categoryChoices === undefined
+    ? (options.databaseUrl ? createCategoryChoiceStore(options.databaseUrl) : null)
+    : options.categoryChoices;
   const ledger = options.ledger ?? null;
   const imports = options.imports ?? null;
   const objectStorage = options.objectStorage ?? null;
@@ -143,6 +149,11 @@ export async function buildApp(options: BuildOptions = {}): Promise<FastifyInsta
       await manualTransactions.close();
     });
   }
+  if (categoryChoices) {
+    app.addHook("onClose", async () => {
+      await categoryChoices.close();
+    });
+  }
   if (ledger) {
     app.addHook("onClose", async () => {
       await ledger.close();
@@ -162,7 +173,7 @@ export async function buildApp(options: BuildOptions = {}): Promise<FastifyInsta
   await app.register(authRoutes);
   await app.register(usersRoutes);
   await app.register(accountsRoutes);
-  await app.register(transactionsRoutes, { manual: manualTransactions });
+  await app.register(transactionsRoutes, { manual: manualTransactions, categories: categoryChoices });
   await app.register(ledgerRoutes, { ledger });
   await app.register(liveRoutes, { ledger });
   await app.register(importRoutes, {

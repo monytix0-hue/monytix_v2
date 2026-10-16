@@ -171,7 +171,14 @@ const listColumns = `
   e.rulebook_version,
   e.matched_rule_code,
   c.category_status,
-  c.category_code,
+  COALESCE(
+    (SELECT choice.category_code
+       FROM core.category_choice choice
+      WHERE choice.logical_transaction_id = cv.logical_transaction_id
+      ORDER BY choice.is_explicit DESC
+      LIMIT 1),
+    c.category_code
+  ) AS category_code,
   c.taxonomy_version,
   p.purpose_status,
   p.purpose_code,
@@ -421,7 +428,16 @@ export function createLedgerRead(databaseUrl: string): LedgerRead {
           `WITH current_rows AS MATERIALIZED (
              SELECT cv.currency_code, cv.amount, cv.direction,
                     e.event_family, e.resolution_outcome, e.financial_event_resolution_id,
-                    c.category_status, c.category_code, c.category_resolution_id
+                    c.category_status,
+                    COALESCE(
+                      (SELECT choice.category_code
+                         FROM core.category_choice choice
+                        WHERE choice.logical_transaction_id = cv.logical_transaction_id
+                        ORDER BY choice.is_explicit DESC
+                        LIMIT 1),
+                      c.category_code
+                    ) AS category_code,
+                    c.category_resolution_id
                FROM core.canonical_transaction_version cv
                JOIN core.logical_transaction lt ON lt.logical_transaction_id = cv.logical_transaction_id
                LEFT JOIN intel.financial_event_resolution e

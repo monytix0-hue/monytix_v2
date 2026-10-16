@@ -37,6 +37,7 @@ export type ObjectStorage = {
   readObject(key: string): Promise<StoredObject | null>;
   copyObject(sourceKey: string, targetKey: string): Promise<string>;
   deleteObject(key: string): Promise<void>;
+  putObject(input: { key: string; body: Buffer; contentType: string }): Promise<string>;
   probe(): Promise<void>;
   close(): Promise<void>;
 };
@@ -85,6 +86,17 @@ export function createObjectStorage(config: StorageConfig): ObjectStorage {
           "content-length": String(input.byteSize),
         },
       };
+    },
+
+    async putObject(input) {
+      const result = await client.send(new PutObjectCommand({
+        Bucket: config.bucket,
+        Key: input.key,
+        Body: input.body,
+        ContentType: input.contentType,
+        ContentLength: input.body.length,
+      }));
+      return (result.ETag ?? "").replaceAll("\"", "");
     },
 
     async readObject(key) {

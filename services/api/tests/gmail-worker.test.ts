@@ -155,7 +155,12 @@ test("email text stays a candidate and statement attachments use the import shap
   });
   assert.equal(extracted.candidates.length, 2);
   assert.deepEqual(extracted.candidates.map((row) => row.mimeType), ["text/plain", "text/html"]);
-  const serialized = JSON.stringify(extracted);
+  const serialized = JSON.stringify({
+    candidates: extracted.candidates,
+    handoffs: extracted.handoffs.map(({ bytes: _bytes, ...handoff }) => handoff),
+  });
+  assert.equal(extracted.texts[0]?.text.includes("SELF"), true);
+  assert.equal(extracted.handoffs[0]?.bytes.equals(pdf), true);
   assert.equal(serialized.includes("SELF"), false);
   assert.equal(serialized.includes("Swiggy"), false);
   assert.equal(serialized.includes("obligation"), false);

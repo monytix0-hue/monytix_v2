@@ -1,6 +1,8 @@
 import pg from "pg";
+import { identifyBank } from "../gmail/pipeline.js";
 import { readStatementCsv } from "../ingestion/csv.js";
 import { ExtractionFailure } from "../ingestion/failure.js";
+import { overlayParsedNarration } from "../ingestion/bank-narration.js";
 import { combineParsedRow, extractStatementRows } from "../ingestion/statement.js";
 import type { StatementRow } from "../ingestion/table.js";
 import { sha256Hex, type ObjectStorage } from "./storage.js";
@@ -66,14 +68,7 @@ export async function runExtractOnce(
         await client.query("SELECT ops.finish_statement_extraction($1::uuid, true, NULL)", [job.outbox_event_id]);
         return true;
       }
-      const parsed = [];
-      for (const row of rows) {
-        const result = await client.query<{ parsed: Record<string, unknown> }>(
-          "SELECT spendsense.parse_narration_v4($1, $2) AS parsed",
-          [row.description, row.direction],
-        );
-        parsed.push(combineParsedRow(result.rows[0].parsed, row));
-      }
+      const parsed = await parseStatementRows(client, job.payload.source_document_id, rows);
       const saved = await client.query<{ result: { outcome: string; extraction_run_id?: string; status?: string } }>(
         "SELECT ops.save_statement_extraction($1::uuid, $2, $3::jsonb, NULL, NULL) AS result",
         [job.payload.source_document_id, actualHash, JSON.stringify(parsed)],
@@ -100,12 +95,47 @@ export async function runExtractOnce(
 }
 
 async function mapBoundExtraction(client: pg.Client, documentId: string, extractionRunId: string): Promise<void> {
+  const context = await documentContext(client, documentId);
+  if (context.pipeline && context.pipeline !== "BANKING") {
+    return;
+  }
   await client.query("SELECT ops.bind_statement_for_mapping($1::uuid)", [documentId]);
   await client.query("SELECT ops.map_statement_extraction($1::uuid)", [extractionRunId]);
   await client.query("SELECT ops.publish_structure_extraction_run($1::uuid)", [extractionRunId]);
   await client.query("SELECT ops.interpret_extraction_run($1::uuid)", [extractionRunId]);
   await client.query("SELECT ops.resolve_extraction_run($1::uuid)", [extractionRunId]);
   await client.query("SELECT ops.resolve_party_extraction_run($1::uuid)", [extractionRunId]);
+  await client.query("SELECT ops.apply_import_categories($1::uuid)", [extractionRunId]);
+}
+
+async function parseStatementRows(client: pg.Client, documentId: string, rows: StatementRow[]): Promise<Record<string, unknown>[]> {
+  const context = await documentContext(client, documentId);
+  const bank = identifyBank(context.filename, context.sender);
+  const parsed = [];
+  for (const row of rows) {
+    const result = await client.query<{ parsed: Record<string, unknown> }>(
+      "SELECT spendsense.parse_narration_v4($1, $2, $3) AS parsed",
+      [row.description, row.direction, bank],
+    );
+    parsed.push(combineParsedRow(overlayParsedNarration(row.description, result.rows[0].parsed ?? {}, bank), row));
+  }
+  return parsed;
+}
+
+async function documentContext(client: pg.Client, documentId: string): Promise<{ filename: string; sender: string; pipeline: string | null }> {
+  const result = await client.query<{ filename: string | null; sender: string | null; pipeline: string | null }>(
+    `SELECT original_filename AS filename,
+            metadata #>> '{source_metadata,sender}' AS sender,
+            metadata #>> '{source_metadata,pipeline_target}' AS pipeline
+       FROM core.source_document
+      WHERE source_document_id = $1`,
+    [documentId],
+  );
+  return {
+    filename: result.rows[0]?.filename ?? "",
+    sender: result.rows[0]?.sender ?? "",
+    pipeline: result.rows[0]?.pipeline ?? null,
+  };
 }
 
 export type StatementOpenTarget = {
@@ -163,14 +193,7 @@ export async function openStatementWithPassword(
       ]);
       return "failed";
     }
-    const parsed = [];
-    for (const row of rows) {
-      const result = await client.query<{ parsed: Record<string, unknown> }>(
-        "SELECT spendsense.parse_narration_v4($1, $2) AS parsed",
-        [row.description, row.direction],
-      );
-      parsed.push(combineParsedRow(result.rows[0].parsed, row));
-    }
+    const parsed = await parseStatementRows(client, target.sourceDocumentId, rows);
     const saved = await client.query<{ result: { outcome: string; extraction_run_id?: string; status?: string } }>(
       "SELECT ops.save_statement_extraction($1::uuid, $2, $3::jsonb, NULL, NULL) AS result",
       [target.sourceDocumentId, actualHash, JSON.stringify(parsed)],

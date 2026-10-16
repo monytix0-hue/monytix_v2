@@ -67,6 +67,7 @@ for file in $(find /database/migrations -maxdepth 1 -type f -name '*.sql' | sort
     0025_statement_pdf_password.sql) code="M2-9-PDF-PASSWORD" ;;
     0026_extraction_failure.sql) code="EXTRACTION-FAILURE" ;;
     0027_statement_account_bind.sql) code="STATEMENT-ACCOUNT-BIND" ;;
+    0028_gmail_statement_pull.sql) code="GMAIL-STATEMENT-PULL" ;;
     *) code="" ;;
   esac
 

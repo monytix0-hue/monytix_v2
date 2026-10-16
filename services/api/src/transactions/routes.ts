@@ -1,5 +1,6 @@
 import { Readable } from "node:stream";
 import type { FastifyPluginAsync } from "fastify";
+import type { CategoryChoiceStore, CategoryMatchScope } from "./category.js";
 import type { ManualTransactionStore } from "./manual.js";
 
 export type TransactionsStub = {
@@ -9,6 +10,7 @@ export type TransactionsStub = {
 
 export type TransactionsRouteOptions = {
   manual?: ManualTransactionStore | null;
+  categories?: CategoryChoiceStore | null;
 };
 
 const amountLiteral = /"amount"\s*:\s*("(?:\\.|[^"\\])*"|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)/g;
@@ -32,6 +34,7 @@ type ManualBody = {
 /** Ledger transactions. */
 export const transactionsRoutes: FastifyPluginAsync<TransactionsRouteOptions> = async (app, options) => {
   const manual = options.manual ?? null;
+  const categories = options.categories ?? null;
 
   app.addHook("preParsing", async (request, _reply, payload) => {
     if (request.method !== "POST" || request.url.split("?")[0] !== "/v1/transactions/manual") {
@@ -98,7 +101,66 @@ export const transactionsRoutes: FastifyPluginAsync<TransactionsRouteOptions> = 
     }
     return reply.status(201).send(result.body);
   });
+
+  app.patch<{ Params: { logicalTransactionId: string } }>("/v1/transactions/:logicalTransactionId/category", async (request, reply) => {
+    if (!request.actorId) {
+      return reply.status(401).send({ error: "unauthorized" });
+    }
+    if (!request.ownerId) {
+      return reply.status(403).send({ error: "owner_forbidden" });
+    }
+    const choice = readCategoryBody(request.body);
+    if (!choice || !uuidText.test(request.params.logicalTransactionId)) {
+      return reply.status(400).send({ error: "invalid_request" });
+    }
+    if (!categories) {
+      return reply.status(503).send({ error: "unavailable" });
+    }
+    const result = await categories.set({
+      actorId: request.actorId,
+      ownerId: request.ownerId,
+      logicalTransactionId: request.params.logicalTransactionId,
+      categoryId: choice.categoryId,
+      applyToPast: choice.applyToPast,
+      matchScope: choice.matchScope,
+    });
+    if (result.outcome === "missing") {
+      return reply.status(404).send({ error: "not_found" });
+    }
+    if (result.outcome === "invalid_category") {
+      return reply.status(400).send({ error: "invalid_category" });
+    }
+    if (result.outcome === "invalid") {
+      return reply.status(400).send({ error: "invalid_request" });
+    }
+    if (result.outcome === "forbidden" || !result.body) {
+      return reply.status(403).send({ error: "owner_forbidden" });
+    }
+    return reply.send(result.body);
+  });
 };
+
+function readCategoryBody(body: unknown): { categoryId: string; applyToPast: boolean; matchScope: CategoryMatchScope } | null {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return null;
+  }
+  const record = body as Record<string, unknown>;
+  if (typeof record.category_id !== "string" || record.category_id.trim().length === 0) {
+    return null;
+  }
+  if (record.apply_to_past !== undefined && typeof record.apply_to_past !== "boolean") {
+    return null;
+  }
+  const scope = record.match_scope === undefined ? "EXACT_MERCHANT" : record.match_scope;
+  if (scope !== "EXACT_MERCHANT" && scope !== "RAW_TOKEN") {
+    return null;
+  }
+  return {
+    categoryId: record.category_id.trim(),
+    applyToPast: record.apply_to_past === true,
+    matchScope: scope,
+  };
+}
 
 function headerValue(value: string | string[] | undefined): string | null {
   if (typeof value !== "string") {

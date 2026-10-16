@@ -8,15 +8,24 @@ const statementTypes: Record<string, AttachmentHandoff["fileType"]> = {
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "XLSX",
 };
 
+export type ExtractedHandoff = AttachmentHandoff & { bytes: Buffer };
+
+export type ExtractedText = {
+  partIndex: number;
+  mimeType: "text/plain" | "text/html";
+  text: string;
+};
+
 export function extractMimeMessage(input: {
   ownerId: string;
   gmailConnectionId: string;
   gmailMessageId: string;
   raw: string;
-}): { candidates: MessageCandidate[]; handoffs: AttachmentHandoff[] } {
+}): { candidates: MessageCandidate[]; handoffs: ExtractedHandoff[]; texts: ExtractedText[] } {
   const parts = splitParts(input.raw);
   const candidates: MessageCandidate[] = [];
-  const handoffs: AttachmentHandoff[] = [];
+  const handoffs: ExtractedHandoff[] = [];
+  const texts: ExtractedText[] = [];
   parts.forEach((part, partIndex) => {
     const mime = mimeType(part.headers);
     const body = decodeBody(part.headers, part.body);
@@ -34,6 +43,7 @@ export function extractMimeMessage(input: {
           mime_type: mime,
         },
       });
+      texts.push({ partIndex, mimeType: mime, text: body.toString("utf8") });
       return;
     }
     const fileType = statementTypes[mime] ?? fileTypeFromName(filenameOf(part.headers));
@@ -56,9 +66,15 @@ export function extractMimeMessage(input: {
         mime_type: mime,
         original_filename: filename,
       },
+      bytes: body,
     });
   });
-  return { candidates, handoffs };
+  return { candidates, handoffs, texts };
+}
+
+export function messageFrom(raw: string): string {
+  const head = raw.split(/\r?\n\r?\n/)[0] ?? "";
+  return head.match(/^from:\s*(.+)$/im)?.[1]?.trim() ?? "";
 }
 
 export function importInitiation(handoff: AttachmentHandoff): {

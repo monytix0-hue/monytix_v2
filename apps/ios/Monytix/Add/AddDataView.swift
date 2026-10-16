@@ -25,6 +25,11 @@ private let unavailable = "Unavailable"
 private let maxBytes = 10_485_760
 private let banks = ["HDFC", "ICICI", "SBI", "AXIS", "KOTAK", "YES", "+ More"]
 
+private struct LockedImport: Identifiable {
+    let id: String
+    let filename: String
+}
+
 private struct ChosenFile {
     let name: String
     let type: String
@@ -53,6 +58,10 @@ struct AddSheetsView: View {
     @State private var picking = false
     @State private var gmailNote: String?
     @State private var statementPassword = ""
+    @State private var lockedImports: [LockedImport] = []
+    @State private var openingId: String?
+    @State private var lockedPassword = ""
+    @State private var lockedNote: String?
 
     private var palette: PersonalPalette { colorScheme == .dark ? PersonalTokens.dark : PersonalTokens.light }
 
@@ -96,6 +105,10 @@ struct AddSheetsView: View {
                 onStep(.success)
             }
         }
+        .task(id: step) {
+            guard step == .sources else { return }
+            lockedImports = await loadLockedImports()
+        }
     }
 
     private var title: String {
@@ -118,6 +131,20 @@ struct AddSheetsView: View {
             sourceRow("Account Aggregator", "Coming soon", action: nil)
             if let gmailNote {
                 Text(gmailNote).personalText(.secondary, size: 13)
+            }
+            ForEach(lockedImports) { item in
+                sourceRow(item.filename, "Password required") { openingId = item.id }
+            }
+            if openingId != nil {
+                SecureField("PDF password", text: $lockedPassword)
+                    .textContentType(.password)
+                    .personalText(.primary, size: 15)
+                gold("Open statement", enabled: !lockedPassword.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
+                    Task { await openLocked() }
+                }
+                if let lockedNote {
+                    Text(lockedNote).personalText(.secondary, size: 13)
+                }
             }
         case .upload:
             Button { picking = true } label: {
@@ -175,6 +202,38 @@ struct AddSheetsView: View {
             let response = await api.submit(method: "POST", path: "/v1/gmail/connect/code", body: body, idempotencyKey: nil, token: token)
             gmailNote = (200..<300).contains(response.status) ? nil : unavailable
         }
+    }
+
+    private func loadLockedImports() async -> [LockedImport] {
+        let response = await api.submit(method: "GET", path: "/v1/imports/pending-unlock", body: nil, idempotencyKey: nil, token: token)
+        guard (200..<300).contains(response.status),
+              let root = jsonObject(response.data),
+              let rows = root["imports"] as? [[String: Any]] else {
+            return []
+        }
+        return rows.compactMap { row in
+            guard let id = row["import_id"] as? String, !id.isEmpty else { return nil }
+            let filename = (row["filename"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return LockedImport(id: id, filename: filename?.isEmpty == false ? filename! : "statement.pdf")
+        }
+    }
+
+    private func openLocked() async {
+        guard let importId = openingId else { return }
+        let secret = lockedPassword.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !secret.isEmpty,
+              let body = try? JSONSerialization.data(withJSONObject: ["statement_password": secret]) else {
+            return
+        }
+        let open = await api.submit(method: "POST", path: "/v1/imports/\(importId)/open", body: body, idempotencyKey: UUID().uuidString, token: token)
+        if (200..<300).contains(open.status) {
+            lockedPassword = ""
+            openingId = nil
+            lockedNote = nil
+            lockedImports = await loadLockedImports()
+            return
+        }
+        lockedNote = open.status == 422 ? "Wrong PDF password" : unavailable
     }
 
     private func gmailServerClientID() async -> String? {

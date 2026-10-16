@@ -9,6 +9,7 @@ export type ImportStore = {
   fail(input: { actorId: string; ownerId: string; importId: string; reason: string }): Promise<void>;
   status(input: { actorId: string; ownerId: string; importId: string }): Promise<ImportResult>;
   openTarget(input: { actorId: string; ownerId: string; importId: string }): Promise<StatementOpenTargetResult>;
+  pendingUnlock(input: { actorId: string; ownerId: string }): Promise<PendingUnlock[]>;
   reviewQueue(input: { actorId: string; ownerId: string; importId: string; sourceRecordId: string | null }): Promise<ImportResult>;
   resolveReview(input: ReviewInput): Promise<ImportResult>;
   finalize(input: { actorId: string; ownerId: string; importId: string; idempotencyKey: string }): Promise<ImportResult>;
@@ -180,11 +181,25 @@ export function createImportStore(databaseUrl: string): ImportStore {
       );
       return required(result.rows[0]?.result);
     },
+    async pendingUnlock(input) {
+      const result = await pool.query<{ import_id: string; filename: string | null }>(
+        "SELECT import_id, filename FROM ops.list_gmail_pending_unlock($1::uuid, $2::uuid)",
+        [input.actorId, input.ownerId],
+      );
+      return result.rows
+        .filter((row) => typeof row.import_id === "string" && row.import_id.length > 0)
+        .map((row) => ({ import_id: row.import_id, filename: row.filename?.trim() || "statement.pdf" }));
+    },
     async close() {
       await pool.end();
     },
   };
 }
+
+export type PendingUnlock = {
+  import_id: string;
+  filename: string;
+};
 
 export type StatementOpenTargetResult = {
   outcome: string;

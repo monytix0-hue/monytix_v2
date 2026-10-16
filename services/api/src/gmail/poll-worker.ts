@@ -38,6 +38,8 @@ async function tick(url: string, storage: ObjectStorage, imports: ImportStore): 
       history_checkpoint: string | null;
       credential_ciphertext: string;
     }>("SELECT * FROM ops.list_gmail_poll_targets()");
+    let stored = 0;
+    let skipped = 0;
     for (const row of listed.rows) {
       if (!row.actor_id) {
         continue;
@@ -51,11 +53,20 @@ async function tick(url: string, storage: ObjectStorage, imports: ImportStore): 
           refreshToken: unsealCredential(row.credential_ciphertext, encryptionKey),
           historyCheckpoint: row.history_checkpoint,
         };
-        await pollOne(connection, row.gmail_connection_id, row.owner_id, actorId, client, storage, imports);
+        const counts = await pollOne(connection, row.gmail_connection_id, row.owner_id, actorId, client, storage, imports);
+        stored += counts.stored;
+        skipped += counts.skipped;
       } catch (error) {
         logFailure("connection_failed", error);
       }
     }
+    console.log(JSON.stringify({
+      module: "gmail-worker",
+      event: "tick",
+      mailboxes: listed.rows.length,
+      stored,
+      skipped,
+    }));
   } finally {
     await client.end();
   }
@@ -69,8 +80,8 @@ async function pollOne(
   client: pg.Client,
   storage: ObjectStorage,
   imports: ImportStore,
-): Promise<void> {
-  await pollConnection(connection, {
+): Promise<{ stored: number; skipped: number }> {
+  return pollConnection(connection, {
         fetchImpl: async (target, init) => {
           const response = await fetch(target, init);
           return { status: response.status, json: () => response.json() as Promise<unknown> };

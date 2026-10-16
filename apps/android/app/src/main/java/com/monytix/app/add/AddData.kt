@@ -63,6 +63,8 @@ private const val Unavailable = "Unavailable"
 private const val MaxBytes = 10_485_760
 private val banks = listOf("HDFC", "ICICI", "SBI", "AXIS", "KOTAK", "YES", "+ More")
 
+private data class LockedImport(val id: String, val filename: String)
+
 private data class ChosenFile(val name: String, val type: String, val bytes: ByteArray)
 
 private data class ImportStatus(val count: String?, val stage: String?, val reached: Boolean, val done: Boolean)
@@ -102,6 +104,14 @@ fun AddSheets(
     }
     val scope = rememberCoroutineScope()
     var gmailNote by remember { mutableStateOf<String?>(null) }
+    var locked by remember { mutableStateOf(emptyList<LockedImport>()) }
+    var openingId by remember { mutableStateOf<String?>(null) }
+    var lockedPassword by remember { mutableStateOf("") }
+    var lockedNote by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(step) {
+        if (step != AddStep.Sources) return@LaunchedEffect
+        locked = loadLockedImports(api, token)
+    }
     LaunchedEffect(step, attempt) {
         val file = chosen
         if (step != AddStep.Processing || file == null) return@LaunchedEffect
@@ -138,6 +148,24 @@ fun AddSheets(
                         }
                     },
                     gmailNote = gmailNote,
+                    locked = locked,
+                    openingId = openingId,
+                    password = lockedPassword,
+                    note = lockedNote,
+                    onSelect = { openingId = it },
+                    onPassword = { lockedPassword = it },
+                    onOpen = {
+                        val importId = openingId ?: return@SourcesBody
+                        scope.launch {
+                            val opened = openLockedImport(api, token, importId, lockedPassword)
+                            lockedNote = opened.note
+                            if (opened.cleared) {
+                                lockedPassword = ""
+                                openingId = null
+                                locked = loadLockedImports(api, token)
+                            }
+                        }
+                    },
                 )
                 AddStep.Upload -> UploadBody(
                     chosen = chosen,
@@ -174,7 +202,18 @@ private fun title(step: AddStep) = when (step) {
 }
 
 @Composable
-private fun SourcesBody(onStatement: () -> Unit, onGmail: () -> Unit, gmailNote: String?) {
+private fun SourcesBody(
+    onStatement: () -> Unit,
+    onGmail: () -> Unit,
+    gmailNote: String?,
+    locked: List<LockedImport>,
+    openingId: String?,
+    password: String,
+    note: String?,
+    onSelect: (String) -> Unit,
+    onPassword: (String) -> Unit,
+    onOpen: () -> Unit,
+) {
     val theme = LocalPersonalTheme.current
     SourceRow("Bank statement", "PDF or CSV", onStatement)
     SourceRow("Gmail", "Connect", onGmail)
@@ -182,6 +221,54 @@ private fun SourcesBody(onStatement: () -> Unit, onGmail: () -> Unit, gmailNote:
     if (gmailNote != null) {
         Text(gmailNote, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
     }
+    locked.forEach { item ->
+        SourceRow(item.filename, "Password required") { onSelect(item.id) }
+    }
+    if (openingId != null) {
+        OutlinedTextField(
+            value = password,
+            onValueChange = onPassword,
+            label = { Text("PDF password") },
+            visualTransformation = PasswordVisualTransformation(),
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Gold("Open statement", password.trim().isNotEmpty(), onOpen)
+        if (note != null) {
+            Text(note, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+        }
+    }
+}
+
+private suspend fun loadLockedImports(api: MonytixApi, token: suspend (Boolean) -> String?): List<LockedImport> {
+    val response = api.submit("GET", "/v1/imports/pending-unlock", null, null, token)
+    if (response.status !in 200..299) return emptyList()
+    val rows = JSONObject(response.text ?: return emptyList()).optJSONArray("imports") ?: return emptyList()
+    return buildList {
+        for (index in 0 until rows.length()) {
+            val row = rows.optJSONObject(index) ?: continue
+            val id = row.optString("import_id")
+            if (id.isBlank()) continue
+            val filename = row.optString("filename").trim().ifBlank { "statement.pdf" }
+            add(LockedImport(id, filename))
+        }
+    }
+}
+
+private data class OpenResult(val cleared: Boolean, val note: String?)
+
+private suspend fun openLockedImport(
+    api: MonytixApi,
+    token: suspend (Boolean) -> String?,
+    importId: String,
+    password: String,
+): OpenResult {
+    val secret = password.trim()
+    if (secret.isEmpty()) return OpenResult(false, null)
+    val body = JSONObject().put("statement_password", secret).toString()
+    val open = api.submit("POST", "/v1/imports/$importId/open", body, UUID.randomUUID().toString(), token)
+    if (open.status in 200..299) return OpenResult(true, null)
+    return OpenResult(false, if (open.status == 422) "Wrong PDF password" else Unavailable)
 }
 
 private suspend fun openGmail(

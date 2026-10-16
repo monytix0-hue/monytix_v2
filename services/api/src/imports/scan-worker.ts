@@ -24,7 +24,15 @@ function logWorkerFailure(error: unknown): void {
 async function tick(): Promise<void> {
   await pingScanner(host, port);
   await runScanOnce(databaseUrl, storage, host, port);
-  await runExtractOnce(databaseUrl, storage);
+  const extracted = await runExtractOnce(databaseUrl, storage);
+  if (extracted) {
+    console.log(JSON.stringify({
+      module: "statement-worker",
+      event: "extract",
+      code: extracted.code,
+      rows: extracted.rows,
+    }));
+  }
   await sweepRetention(databaseUrl, storage, abandonedHours, retentionDays);
 }
 

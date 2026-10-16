@@ -70,7 +70,8 @@ test("history expiry falls back to search, an empty page does not, and reminders
     }
     return { status: 500, json: async () => ({}) };
   };
-  await pollConnection(connection(null), ports(fetchImpl, uploaded, checkpoints, dueDates));
+  const searched = await pollConnection(connection(null), ports(fetchImpl, uploaded, checkpoints, dueDates));
+  assert.deepEqual(searched, { stored: 1, skipped: 0 });
   assert.deepEqual(uploaded, ["cams-statement.pdf"]);
   assert.deepEqual(checkpoints, ["88"]);
   assert.equal(dueDates.length, 2);
@@ -103,7 +104,7 @@ test("an oversized attachment is skipped and the checkpoint is still saved", asy
   let authorized = 0;
   const checkpoints: string[] = [];
   const pdf = Buffer.alloc(11 * 1024 * 1024, 1);
-  await pollConnection(connection(null), searchPorts({
+  const skipped = await pollConnection(connection(null), searchPorts({
     rawFor: (id) => id === "file-1" ? attachmentMessage(pdf, "large.pdf") : undefined,
     authorize: async () => {
       authorized += 1;
@@ -113,6 +114,7 @@ test("an oversized attachment is skipped and the checkpoint is still saved", asy
       checkpoints.push(checkpoint);
     },
   }));
+  assert.deepEqual(skipped, { stored: 0, skipped: 1 });
   assert.equal(authorized, 0);
   assert.deepEqual(checkpoints, ["88"]);
 });

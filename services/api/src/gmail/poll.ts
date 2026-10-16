@@ -72,42 +72,52 @@ export type PollPorts = {
   setCheckpoint: (checkpoint: string) => Promise<void>;
 };
 
-export async function pollConnection(connection: PollConnection, ports: PollPorts): Promise<void> {
+export type PollResult = { stored: number; skipped: number };
+
+const emptyPoll: PollResult = { stored: 0, skipped: 0 };
+
+function addPoll(left: PollResult, right: PollResult): PollResult {
+  return { stored: left.stored + right.stored, skipped: left.skipped + right.skipped };
+}
+
+export async function pollConnection(connection: PollConnection, ports: PollPorts): Promise<PollResult> {
   const accessToken = await refreshAccessToken(connection.refreshToken, ports);
   if (connection.historyCheckpoint) {
     const history = await listHistory(accessToken, connection.historyCheckpoint, ports.fetchImpl);
     if (history.expired) {
-      await searchMailbox(connection, accessToken, ports);
-      return;
+      return searchMailbox(connection, accessToken, ports);
     }
     if (history.records.length === 0) {
-      return;
+      return emptyPoll;
     }
+    let totals = emptyPoll;
     for (const record of history.records) {
       for (const messageId of record.messageIds) {
-        await readMessage(connection, accessToken, messageId, true, ports);
+        totals = addPoll(totals, await readMessage(connection, accessToken, messageId, true, ports));
       }
       await ports.setCheckpoint(record.id);
     }
-    return;
+    return totals;
   }
-  await searchMailbox(connection, accessToken, ports);
+  return searchMailbox(connection, accessToken, ports);
 }
 
-async function searchMailbox(connection: PollConnection, accessToken: string, ports: PollPorts): Promise<void> {
+async function searchMailbox(connection: PollConnection, accessToken: string, ports: PollPorts): Promise<PollResult> {
+  let totals = emptyPoll;
   const attachments = await listMessages(accessToken, attachmentQuery, ports.fetchImpl);
   for (const messageId of attachments) {
-    await readMessage(connection, accessToken, messageId, true, ports);
+    totals = addPoll(totals, await readMessage(connection, accessToken, messageId, true, ports));
   }
   const reminders = await listMessages(accessToken, reminderQuery, ports.fetchImpl);
   for (const messageId of reminders) {
-    await readMessage(connection, accessToken, messageId, false, ports);
+    totals = addPoll(totals, await readMessage(connection, accessToken, messageId, false, ports));
   }
   const profile = await gmailJson(accessToken, `${gmailApi}/profile`, ports.fetchImpl);
   const historyId = textField(profile, "historyId");
   if (historyId) {
     await ports.setCheckpoint(historyId);
   }
+  return totals;
 }
 
 async function readMessage(
@@ -116,11 +126,11 @@ async function readMessage(
   messageId: string,
   allowImport: boolean,
   ports: PollPorts,
-): Promise<void> {
+): Promise<PollResult> {
   const payload = await gmailJson(accessToken, `${gmailApi}/messages/${encodeURIComponent(messageId)}?format=raw`, ports.fetchImpl);
   const rawField = textField(payload, "raw");
   if (!rawField) {
-    return;
+    return emptyPoll;
   }
   const raw = Buffer.from(rawField, "base64url").toString("latin1");
   const extracted = extractMimeMessage({
@@ -143,8 +153,9 @@ async function readMessage(
     await ports.saveDueDate({ messageId, ...reminder });
   }
   if (!allowImport) {
-    return;
+    return emptyPoll;
   }
+  let totals = emptyPoll;
   const sender = messageFrom(raw);
   for (const handoff of extracted.handoffs) {
     const idempotencyKey = `gmail:${connection.gmailConnectionId}:${messageId}:${handoff.partIndex}`;
@@ -152,6 +163,7 @@ async function readMessage(
       continue;
     }
     if (!isValidAttachmentSize(handoff.byteSize)) {
+      totals = addPoll(totals, { stored: 0, skipped: 1 });
       continue;
     }
     const filename = sanitizeFilename(handoff.originalFilename, handoff.fileType);
@@ -175,12 +187,15 @@ async function readMessage(
       throw workerError("gmail statement authorize forbidden", "forbidden");
     }
     if (authorized.outcome === "invalid" || authorized.outcome === "conflict") {
+      totals = addPoll(totals, { stored: 0, skipped: 1 });
       continue;
     }
     if (authorized.outcome !== "created" && authorized.outcome !== "replay" && authorized.outcome !== "pending") {
+      totals = addPoll(totals, { stored: 0, skipped: 1 });
       continue;
     }
     if (!authorized.importId) {
+      totals = addPoll(totals, { stored: 0, skipped: 1 });
       continue;
     }
     const stagingKey = `owners/${connection.ownerId}/imports/${authorized.importId}/staging`;
@@ -199,7 +214,9 @@ async function readMessage(
       etag: etag.replaceAll("\"", ""),
     });
     await ports.saveHandoff({ ...handoff, originalFilename: filename });
+    totals = addPoll(totals, { stored: 1, skipped: 0 });
   }
+  return totals;
 }
 
 function isValidAttachmentSize(byteLength: number): boolean {

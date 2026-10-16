@@ -36,6 +36,20 @@ export const importRoutes: FastifyPluginAsync<ImportRouteOptions> = async (app, 
   const databaseUrl = options.databaseUrl?.trim() ?? "";
   const scanner = options.scanner;
 
+  app.get("/v1/imports/pending-unlock", async (request, reply) => {
+    if (!request.actorId) {
+      return reply.status(401).send({ error: "unauthorized" });
+    }
+    if (!request.ownerId) {
+      return reply.status(403).send({ error: "owner_forbidden" });
+    }
+    if (!imports) {
+      return reply.status(503).send({ error: "unavailable" });
+    }
+    const rows = await imports.pendingUnlock({ actorId: request.actorId, ownerId: request.ownerId });
+    return reply.status(200).send({ imports: rows });
+  });
+
   app.post("/v1/imports", async (request, reply) => {
     if (!request.actorId) {
       return reply.status(401).send({ error: "unauthorized" });

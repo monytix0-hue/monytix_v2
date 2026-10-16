@@ -20,24 +20,46 @@ type Claim = {
   };
 };
 
+export type ExtractionReport = {
+  code: "PASSWORD_REJECTED" | "INVALID_STRUCTURE" | "NO_ROWS" | "mapped";
+  rows: number;
+};
+
+export function extractionReport(
+  failure: "PASSWORD_REJECTED" | "INVALID_STRUCTURE" | null,
+  rowCount: number,
+  mapped: boolean,
+): ExtractionReport | null {
+  if (failure === "PASSWORD_REJECTED" || failure === "INVALID_STRUCTURE") {
+    return { code: failure, rows: 0 };
+  }
+  if (rowCount === 0) {
+    return { code: "NO_ROWS", rows: 0 };
+  }
+  if (mapped) {
+    return { code: "mapped", rows: rowCount };
+  }
+  return null;
+}
+
 export async function runExtractOnce(
   databaseUrl: string,
   storage: ObjectStorage,
   statementPassword?: string,
-): Promise<boolean> {
+): Promise<ExtractionReport | null> {
   const client = new pg.Client({ connectionString: databaseUrl });
   await client.connect();
   try {
     const claim = await client.query<{ result: Claim }>("SELECT ops.claim_statement_extraction() AS result");
     const job = claim.rows[0]?.result;
     if (!job || job.outcome !== "claimed" || !job.outbox_event_id || !job.payload) {
-      return false;
+      return null;
     }
     try {
       const object = await storage.readObject(job.payload.object_key);
       if (!object) {
         await client.query("SELECT ops.finish_statement_extraction($1::uuid, false, $2)", [job.outbox_event_id, "object missing"]);
-        return true;
+        return null;
       }
       const actualHash = sha256Hex(object.body);
       if (actualHash !== job.payload.sha256) {
@@ -46,7 +68,7 @@ export async function runExtractOnce(
           actualHash,
         ]);
         await client.query("SELECT ops.finish_statement_extraction($1::uuid, true, NULL)", [job.outbox_event_id]);
-        return true;
+        return null;
       }
       let rows: StatementRow[];
       try {
@@ -57,7 +79,7 @@ export async function runExtractOnce(
           : error instanceof Error && error.message === "invalid statement structure"
             ? "INVALID_STRUCTURE"
             : null;
-        if (!code) {
+        if (code !== "PASSWORD_REJECTED" && code !== "INVALID_STRUCTURE") {
           throw error;
         }
         await client.query("SELECT ops.save_statement_extraction($1::uuid, $2, '[]'::jsonb, $3, NULL)", [
@@ -66,7 +88,7 @@ export async function runExtractOnce(
           code,
         ]);
         await client.query("SELECT ops.finish_statement_extraction($1::uuid, true, NULL)", [job.outbox_event_id]);
-        return true;
+        return extractionReport(code, 0, false);
       }
       const parsed = await parseStatementRows(client, job.payload.source_document_id, rows);
       const saved = await client.query<{ result: { outcome: string; extraction_run_id?: string; status?: string } }>(
@@ -74,20 +96,23 @@ export async function runExtractOnce(
         [job.payload.source_document_id, actualHash, JSON.stringify(parsed)],
       );
       const extraction = saved.rows[0]?.result;
+      let mapped = false;
       if (extraction?.outcome === "created" && extraction.status !== "FAILED" && extraction.extraction_run_id) {
         await mapBoundExtraction(client, job.payload.source_document_id, extraction.extraction_run_id);
+        mapped = true;
       } else if (extraction?.outcome === "replay" && extraction.extraction_run_id) {
         await mapBoundExtraction(client, job.payload.source_document_id, extraction.extraction_run_id);
+        mapped = true;
       }
       await client.query("SELECT ops.finish_statement_extraction($1::uuid, true, NULL)", [job.outbox_event_id]);
-      return true;
+      return extractionReport(null, parsed.length, mapped);
     } catch (error) {
       const message = error instanceof Error ? error.message : "extraction failed";
       await client.query("SELECT ops.finish_statement_extraction($1::uuid, false, $2)", [
         job.outbox_event_id,
         statementPassword && message.includes(statementPassword) ? "extraction failed" : message,
       ]);
-      return true;
+      return null;
     }
   } finally {
     await client.end();

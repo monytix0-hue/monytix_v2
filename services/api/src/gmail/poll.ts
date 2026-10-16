@@ -166,7 +166,7 @@ async function readMessage(
       },
     });
     if (!authorized.importId || (authorized.outcome !== "created" && authorized.outcome !== "replay")) {
-      throw new Error("gmail statement authorize failed");
+      throw workerError("gmail statement authorize failed", "authorize_failed");
     }
     const stagingKey = `owners/${connection.ownerId}/imports/${authorized.importId}/staging`;
     await ports.storage.putObject({
@@ -202,7 +202,9 @@ async function refreshAccessToken(refreshToken: string, ports: PollPorts): Promi
   const payload = await response.json();
   const token = textField(payload, "access_token");
   if (response.status !== 200 || !token) {
-    throw new Error("gmail token refresh failed");
+    const googleError = textField(payload, "error");
+    const code = googleError && /^[a-z0-9_]{1,32}$/.test(googleError) ? googleError : `http_${response.status}`;
+    throw workerError("gmail token refresh failed", code);
   }
   return token;
 }
@@ -219,7 +221,7 @@ async function listHistory(
   }
   const payload = await response.json();
   if (response.status !== 200 || !payload || typeof payload !== "object") {
-    throw new Error("gmail history list failed");
+    throw workerError("gmail history list failed", `http_${response.status}`);
   }
   const history = (payload as { history?: unknown }).history;
   if (!Array.isArray(history)) {
@@ -265,9 +267,22 @@ async function gmailJson(accessToken: string, url: string, fetchImpl: PollFetch)
   const response = await fetchImpl(url, { headers: { authorization: `Bearer ${accessToken}` } });
   const payload = await response.json();
   if (response.status !== 200) {
-    throw new Error("gmail request failed");
+    throw workerError("gmail request failed", `http_${response.status}`);
   }
   return payload;
+}
+
+export function workerError(message: string, code: string): Error {
+  const error = new Error(message) as Error & { code: string };
+  error.code = code;
+  return error;
+}
+
+export function workerFailure(error: unknown): { name: string; code: string } {
+  const name = error instanceof Error ? error.name : "Error";
+  const raw = error && typeof error === "object" && "code" in error ? error.code : "";
+  const code = typeof raw === "string" && /^[A-Za-z0-9_]{1,32}$/.test(raw) ? raw : "unknown";
+  return { name, code };
 }
 
 function textField(value: unknown, key: string): string | null {

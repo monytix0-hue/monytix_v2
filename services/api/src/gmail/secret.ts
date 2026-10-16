@@ -12,7 +12,9 @@ export function sealCredential(plaintext: string, keyMaterial: string): string {
 export function unsealCredential(sealed: string, keyMaterial: string): string {
   const packed = Buffer.from(sealed, "base64url");
   if (packed.length < 12 + 16 + 1) {
-    throw new Error("credential seal is invalid");
+    const error = new Error("credential seal is invalid") as Error & { code: string };
+    error.code = "seal_invalid";
+    throw error;
   }
   const key = createHash("sha256").update(keyMaterial).digest();
   const iv = packed.subarray(0, 12);

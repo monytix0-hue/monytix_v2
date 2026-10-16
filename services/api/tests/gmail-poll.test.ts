@@ -2,9 +2,17 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { detectPipelineTarget } from "../src/gmail/pipeline.js";
-import { pollConnection, type PollFetch, type PollPorts } from "../src/gmail/poll.js";
+import { pollConnection, workerError, workerFailure, type PollFetch, type PollPorts } from "../src/gmail/poll.js";
 import { readDueDate } from "../src/gmail/reminders.js";
 import { sealCredential, unsealCredential } from "../src/gmail/secret.js";
+
+test("a worker failure keeps a short code and drops anything else", () => {
+  assert.deepEqual(workerFailure(workerError("gmail token refresh failed", "invalid_grant")), {
+    name: "Error",
+    code: "invalid_grant",
+  });
+  assert.deepEqual(workerFailure(new Error("1//mailbox-credential")), { name: "Error", code: "unknown" });
+});
 
 test("a sealed grant unseals to the same refresh token", () => {
   const token = "1//mailbox-credential";

@@ -2,7 +2,7 @@ import pg from "pg";
 import { createImportStore, type ImportStore } from "../imports/store.js";
 import { createObjectStorage, storageConfigFromEnv, type ObjectStorage } from "../imports/storage.js";
 import type { ExtractedHandoff } from "./mime.js";
-import { pollConnection, type PollConnection } from "./poll.js";
+import { pollConnection, workerError, workerFailure, type PollConnection } from "./poll.js";
 import { unsealCredential } from "./secret.js";
 
 const databaseUrl = process.env.DATABASE_URL?.trim() ?? "";
@@ -21,9 +21,9 @@ if (!databaseUrl || !storageConfig || !clientId || !clientSecret || !encryptionK
 }
 
 async function run(url: string, storage: ObjectStorage, imports: ImportStore): Promise<void> {
-  await tick(url, storage, imports).catch(logFailure);
+  await tick(url, storage, imports).catch((error: unknown) => logFailure("tick_failed", error));
   setInterval(() => {
-    void tick(url, storage, imports).catch(logFailure);
+    void tick(url, storage, imports).catch((error: unknown) => logFailure("tick_failed", error));
   }, 60_000);
 }
 
@@ -53,7 +53,7 @@ async function tick(url: string, storage: ObjectStorage, imports: ImportStore): 
         };
         await pollOne(connection, row.gmail_connection_id, row.owner_id, actorId, client, storage, imports);
       } catch (error) {
-        logFailure(error);
+        logFailure("connection_failed", error);
       }
     }
   } finally {
@@ -135,7 +135,7 @@ async function pollOne(
             finalKey: `owners/${ownerId}/imports/${input.importId}/object`,
           });
           if (completed.outcome !== "created" && completed.outcome !== "replay") {
-            throw new Error("gmail statement complete failed");
+            throw workerError("gmail statement complete failed", "complete_failed");
           }
         },
         setCheckpoint: async (checkpoint) => {
@@ -170,8 +170,7 @@ function importIdOf(body: Record<string, unknown> | undefined): string | null {
   return typeof importId === "string" ? importId : null;
 }
 
-function logFailure(error: unknown): void {
-  const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code.slice(0, 32) : "unknown";
-  const name = error instanceof Error ? error.name : "Error";
-  console.error(JSON.stringify({ level: "error", module: "gmail-worker", event: "tick_failed", name, code }));
+function logFailure(event: "tick_failed" | "connection_failed", error: unknown): void {
+  const failure = workerFailure(error);
+  console.error(JSON.stringify({ level: "error", module: "gmail-worker", event, name: failure.name, code: failure.code }));
 }

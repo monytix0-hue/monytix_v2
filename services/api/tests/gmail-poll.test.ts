@@ -83,6 +83,57 @@ test("history expiry falls back to search, an empty page does not, and reminders
   assert.deepEqual(checkpoints, []);
 });
 
+test("a pending authorize result finishes the upload", async () => {
+  const completed: string[] = [];
+  const checkpoints: string[] = [];
+  await pollConnection(connection(null), searchPorts({
+    authorize: async () => ({ outcome: "pending", importId: "imp_existing_999" }),
+    complete: async (input) => {
+      completed.push(input.importId);
+    },
+    setCheckpoint: async (checkpoint) => {
+      checkpoints.push(checkpoint);
+    },
+  }));
+  assert.deepEqual(completed, ["imp_existing_999"]);
+  assert.deepEqual(checkpoints, ["88"]);
+});
+
+test("an oversized attachment is skipped and the checkpoint is still saved", async () => {
+  let authorized = 0;
+  const checkpoints: string[] = [];
+  const pdf = Buffer.alloc(11 * 1024 * 1024, 1);
+  await pollConnection(connection(null), searchPorts({
+    rawFor: (id) => id === "file-1" ? attachmentMessage(pdf, "large.pdf") : undefined,
+    authorize: async () => {
+      authorized += 1;
+      return { outcome: "created", importId: "import-1" };
+    },
+    setCheckpoint: async (checkpoint) => {
+      checkpoints.push(checkpoint);
+    },
+  }));
+  assert.equal(authorized, 0);
+  assert.deepEqual(checkpoints, ["88"]);
+});
+
+test("a forbidden authorize result does not save the checkpoint", async () => {
+  const checkpoints: string[] = [];
+  await assert.rejects(
+    () => pollConnection(connection(null), searchPorts({
+      authorize: async () => ({ outcome: "forbidden", importId: null }),
+      setCheckpoint: async (checkpoint) => {
+        checkpoints.push(checkpoint);
+      },
+    })),
+    (error: unknown) => {
+      assert.equal(workerFailure(error).code, "forbidden");
+      return true;
+    },
+  );
+  assert.deepEqual(checkpoints, []);
+});
+
 function connection(historyCheckpoint: string | null) {
   return {
     gmailConnectionId: "connection-1",
@@ -144,6 +195,56 @@ function ports(
       checkpoints.push(checkpoint);
     },
   };
+}
+
+function searchPorts(input: {
+  authorize: PollPorts["authorize"];
+  complete?: PollPorts["complete"];
+  setCheckpoint: PollPorts["setCheckpoint"];
+  rawFor?: (id: string) => string | undefined;
+}): PollPorts {
+  const fetchImpl: PollFetch = async (url) => {
+    if (url.includes("oauth.example")) {
+      return { status: 200, json: async () => ({ access_token: "access-token" }) };
+    }
+    if (url.includes("/messages/") && url.includes("format=raw")) {
+      const id = decodeURIComponent(url.split("/messages/")[1]?.split("?")[0] ?? "");
+      const raw = input.rawFor?.(id) ?? rawMessage(id);
+      return { status: 200, json: async () => ({ raw: Buffer.from(raw, "latin1").toString("base64url") }) };
+    }
+    if (url.includes("/messages?")) {
+      const query = new URL(url).searchParams.get("q") ?? "";
+      const id = query.includes("filename:") ? "file-1" : "due-1";
+      return { status: 200, json: async () => ({ messages: [{ id }] }) };
+    }
+    if (url.endsWith("/profile")) {
+      return { status: 200, json: async () => ({ historyId: "88" }) };
+    }
+    return { status: 500, json: async () => ({}) };
+  };
+  return {
+    ...ports(fetchImpl, [], [], []),
+    fetchImpl,
+    authorize: input.authorize,
+    complete: input.complete ?? (async () => undefined),
+    setCheckpoint: input.setCheckpoint,
+  };
+}
+
+function attachmentMessage(pdf: Buffer, filename: string): string {
+  return [
+    "From: statements@example.com",
+    "Content-Type: multipart/mixed; boundary=bound",
+    "",
+    "--bound",
+    "Content-Type: application/pdf",
+    `Content-Disposition: attachment; filename="${filename}"`,
+    "Content-Transfer-Encoding: base64",
+    "",
+    pdf.toString("base64"),
+    "--bound--",
+    "",
+  ].join("\r\n");
 }
 
 function rawMessage(id: string): string {

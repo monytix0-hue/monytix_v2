@@ -8,6 +8,8 @@ const gmailApi = "https://gmail.googleapis.com/gmail/v1/users/me";
 const attachmentQuery = "newer_than:90d filename:(pdf OR csv OR xls OR xlsx)";
 const reminderQuery = 'newer_than:90d (subject:due OR subject:premium OR subject:renewal OR subject:"amount due")';
 
+const maxAttachmentBytes = 10 * 1024 * 1024;
+
 const fileMime: Record<ExtractedHandoff["fileType"], string> = {
   PDF: "application/pdf",
   CSV: "text/csv",
@@ -149,13 +151,17 @@ async function readMessage(
     if (await ports.alreadyImported(messageId, handoff.partIndex, idempotencyKey)) {
       continue;
     }
-    const pipelineTarget = detectPipelineTarget(handoff.originalFilename, sender);
+    if (!isValidAttachmentSize(handoff.byteSize)) {
+      continue;
+    }
+    const filename = sanitizeFilename(handoff.originalFilename, handoff.fileType);
+    const pipelineTarget = detectPipelineTarget(filename, sender);
     const authorized = await ports.authorize({
       idempotencyKey,
       fileType: handoff.fileType,
       byteSize: handoff.byteSize,
       sha256: handoff.sha256,
-      filename: handoff.originalFilename,
+      filename,
       sourceMetadata: {
         channel: "gmail",
         gmail_connection_id: connection.gmailConnectionId,
@@ -165,8 +171,17 @@ async function readMessage(
         sender,
       },
     });
-    if (!authorized.importId || (authorized.outcome !== "created" && authorized.outcome !== "replay")) {
-      throw workerError("gmail statement authorize failed", "authorize_failed");
+    if (authorized.outcome === "forbidden") {
+      throw workerError("gmail statement authorize forbidden", "forbidden");
+    }
+    if (authorized.outcome === "invalid" || authorized.outcome === "conflict") {
+      continue;
+    }
+    if (authorized.outcome !== "created" && authorized.outcome !== "replay" && authorized.outcome !== "pending") {
+      continue;
+    }
+    if (!authorized.importId) {
+      continue;
     }
     const stagingKey = `owners/${connection.ownerId}/imports/${authorized.importId}/staging`;
     await ports.storage.putObject({
@@ -183,8 +198,27 @@ async function readMessage(
       sha256: handoff.sha256,
       etag: etag.replaceAll("\"", ""),
     });
-    await ports.saveHandoff(handoff);
+    await ports.saveHandoff({ ...handoff, originalFilename: filename });
   }
+}
+
+function isValidAttachmentSize(byteLength: number): boolean {
+  return byteLength > 0 && byteLength <= maxAttachmentBytes;
+}
+
+function sanitizeFilename(rawFilename: string | undefined, fileType: ExtractedHandoff["fileType"]): string {
+  let cleaned = (rawFilename ?? "").replace(/[\u0000-\u001F\u007F/\\]/g, "").trim();
+  if (cleaned.length > 255) {
+    const extMatch = cleaned.match(/\.([a-zA-Z0-9]+)$/);
+    const ext = extMatch ? `.${extMatch[1]}` : "";
+    const room = 255 - ext.length;
+    cleaned = room > 0 ? cleaned.slice(0, room) + ext : cleaned.slice(0, 255);
+  }
+  if (!cleaned) {
+    const ext = fileType === "CSV" ? "csv" : fileType === "XLS" ? "xls" : fileType === "XLSX" ? "xlsx" : "pdf";
+    return `statement.${ext}`;
+  }
+  return cleaned;
 }
 
 async function refreshAccessToken(refreshToken: string, ports: PollPorts): Promise<string> {

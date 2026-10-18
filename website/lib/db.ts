@@ -10,8 +10,8 @@ export function databaseUrl(): string | null {
   const raw = process.env.DATABASE_URL?.trim();
   if (!raw) return null;
   if (process.env.MONYTIX_IN_DOCKER === "1") return raw;
-  // The compose hostname is only resolvable inside the stack. The role is
-  // monytix_api; the database created by POSTGRES_DB is monytix.
+  // Only the old Compose hostname needs a local rewrite. A Supabase host stays unchanged.
+  if (!raw.includes("@postgres:") && !raw.includes("@postgres/")) return raw;
   return raw
     .replace("@postgres:", "@127.0.0.1:")
     .replace("@postgres/", "@127.0.0.1/")

@@ -59,6 +59,7 @@ RETURNS uuid
 LANGUAGE plpgsql
 VOLATILE
 PARALLEL SAFE
+SET search_path = pg_catalog, public, extensions
 AS $$
 DECLARE
     ts_ms bigint;

@@ -6,7 +6,7 @@ BEGIN;
 
 -- uuid_v7 calls pgcrypto. Callers with a narrow search_path, including
 -- ops.provision_authenticated_actor, must still be able to generate ids.
-ALTER FUNCTION ops.uuid_v7() SET search_path = public, pg_temp;
+ALTER FUNCTION ops.uuid_v7() SET search_path = pg_catalog, public, extensions, pg_temp;
 
 INSERT INTO ref.adapter_registry (
     adapter_id,

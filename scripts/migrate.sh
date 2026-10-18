@@ -8,6 +8,8 @@ set -euo pipefail
 : "${API_DB_PASSWORD:?API_DB_PASSWORD is required}"
 : "${INTELLIGENCE_DB_PASSWORD:?INTELLIGENCE_DB_PASSWORD is required}"
 
+export PGSSLMODE="${PGSSLMODE:-require}"
+
 until pg_isready -h "$PGHOST" -U "$PGUSER" -d "$PGDATABASE"; do
   sleep 1
 done
@@ -15,6 +17,8 @@ done
 psql_value() {
   psql -tA -v ON_ERROR_STOP=1 -c "$1" | tr -d '[:space:]'
 }
+
+psql -v ON_ERROR_STOP=1 -f /database/bootstrap/pgcrypto_compat.sql
 
 psql -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS public.deployed_sql (
   filename text PRIMARY KEY,
@@ -70,6 +74,7 @@ for file in $(find /database/migrations -maxdepth 1 -type f -name '*.sql' | sort
     0028_gmail_statement_pull.sql) code="GMAIL-STATEMENT-PULL" ;;
     0029_gmail_pending_unlock.sql) code="GMAIL-PENDING-UNLOCK" ;;
     0030_gmail_window_drained.sql) code="GMAIL-WINDOW-DRAINED" ;;
+    0031_gmail_spot_transaction.sql) code="GMAIL-SPOT-ALERT" ;;
     *) code="" ;;
   esac
 
@@ -93,6 +98,8 @@ psql -v ON_ERROR_STOP=1 \
   -v api_password="$API_DB_PASSWORD" \
   -v intelligence_password="$INTELLIGENCE_DB_PASSWORD" \
   -f /database/bootstrap/passwords.sql
+
+psql -v ON_ERROR_STOP=1 -f /database/bootstrap/revoke_data_api.sql
 
 role_count="$(psql_value "SELECT count(*) FROM pg_roles WHERE rolname IN ('monytix_api', 'monytix_intelligence') AND rolcanlogin AND NOT rolbypassrls AND NOT rolinherit")"
 if [ "$role_count" != "2" ]; then

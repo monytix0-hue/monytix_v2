@@ -1,38 +1,19 @@
 services:
-  postgres:
-    image: postgres:17
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    restart: unless-stopped
-    mem_limit: 2g
-    cpus: 2
-
   migrator:
     image: postgres:17
     environment:
-      PGHOST: postgres
-      PGPORT: 5432
+      PGHOST: ${POSTGRES_HOST:?POSTGRES_HOST is required}
+      PGPORT: ${POSTGRES_PORT:-5432}
       PGUSER: ${POSTGRES_USER:?POSTGRES_USER is required}
       PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       PGDATABASE: ${POSTGRES_DB:?POSTGRES_DB is required}
+      PGSSLMODE: require
       API_DB_PASSWORD: ${API_DB_PASSWORD:?API_DB_PASSWORD is required}
       INTELLIGENCE_DB_PASSWORD: ${INTELLIGENCE_DB_PASSWORD:?INTELLIGENCE_DB_PASSWORD is required}
     volumes:
       - ./database:/database:ro
       - ./scripts/migrate.sh:/migrate.sh:ro
     entrypoint: ["bash", "/migrate.sh"]
-    depends_on:
-      postgres:
-        condition: service_healthy
     restart: "no"
     mem_limit: 512m
     cpus: 0.5
@@ -75,8 +56,6 @@ services:
     depends_on:
       migrator:
         condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
       clamav:
         condition: service_healthy
     healthcheck:
@@ -123,8 +102,6 @@ services:
     depends_on:
       migrator:
         condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
       clamav:
         condition: service_healthy
     restart: unless-stopped
@@ -152,8 +129,6 @@ services:
     depends_on:
       migrator:
         condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
     restart: unless-stopped
     mem_limit: 512m
     cpus: 0.5
@@ -168,8 +143,6 @@ services:
     depends_on:
       migrator:
         condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
       interval: 10s
@@ -179,6 +152,3 @@ services:
     restart: unless-stopped
     mem_limit: 512m
     cpus: 0.5
-
-volumes:
-  postgres_data:

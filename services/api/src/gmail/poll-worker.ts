@@ -140,7 +140,7 @@ async function pollOne(
       );
     },
     saveSpotTransaction: async (spot) => {
-      const saved = await client.query<{ result: { outcome?: string } }>(
+      const saved = await client.query<{ result: { outcome?: string; gmail_spot_transaction_id?: string } }>(
         `SELECT ops.save_gmail_spot_transaction(
            $1::uuid, $2::uuid, $3, $4, $5, $6::numeric, $7, $8, $9, $10, $11::timestamptz, $12
          ) AS result`,
@@ -159,6 +159,10 @@ async function pollOne(
           spot.rawExcerpt,
         ],
       );
+      const spotId = saved.rows[0]?.result?.gmail_spot_transaction_id;
+      if (spotId) {
+        await client.query("SELECT ops.promote_gmail_spot($1::uuid)", [spotId]);
+      }
       return saved.rows[0]?.result?.outcome === "created" ? "created" : "replay";
     },
     setCheckpoint: async (checkpoint) => {

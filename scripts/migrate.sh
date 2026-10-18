@@ -75,6 +75,7 @@ for file in $(find /database/migrations -maxdepth 1 -type f -name '*.sql' | sort
     0029_gmail_pending_unlock.sql) code="GMAIL-PENDING-UNLOCK" ;;
     0030_gmail_window_drained.sql) code="GMAIL-WINDOW-DRAINED" ;;
     0031_gmail_spot_transaction.sql) code="GMAIL-SPOT-ALERT" ;;
+    0032_gmail_spot_promote.sql) code="GMAIL-SPOT-PROMOTE" ;;
     *) code="" ;;
   esac
 

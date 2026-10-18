@@ -52,3 +52,15 @@ test("the spot migration stages alerts and wakes the worker", () => {
   assert.match(migration, /initial_window_drained = false/);
   assert.match(migration, /not canonical ledger truth/);
 });
+
+test("promotion writes a positive ledger amount through a financial account", () => {
+  const migration = readFileSync(new URL("../../../database/migrations/0032_gmail_spot_promote.sql", import.meta.url), "utf8");
+  assert.match(migration, /ops\.promote_gmail_spot/);
+  assert.match(migration, /INSERT INTO core\.financial_account/);
+  assert.match(migration, /normalization_status, normalization_confidence/);
+  assert.match(migration, /'READY', 1/);
+  assert.match(migration, /v_spot\.amount, v_direction, 'INR'/);
+  assert.match(migration, /THEN 'OUT' ELSE 'IN'/);
+  assert.doesNotMatch(migration, /INSERT INTO accounts\b/);
+  assert.doesNotMatch(migration, /normalisation_status/);
+});

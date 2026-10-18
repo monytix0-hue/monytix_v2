@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { detectPipelineTarget } from "../src/gmail/pipeline.js";
-import { pollConnection, workerError, workerFailure, type PollFetch, type PollPorts } from "../src/gmail/poll.js";
+import { pollConnection, spotTxnQuery, workerError, workerFailure, type PollFetch, type PollPorts, type SpotSave } from "../src/gmail/poll.js";
 import { readDueDate } from "../src/gmail/reminders.js";
 import { sealCredential, unsealCredential } from "../src/gmail/secret.js";
 
@@ -41,10 +41,18 @@ test("a due date is recorded only when the mail has both a date and an amount", 
   assert.equal(readFileSync(new URL("../src/gmail/reminders.ts", import.meta.url), "utf8").includes("logical_transaction"), false);
 });
 
-test("history expiry falls back to search, an empty page does not, and reminders are not uploaded", async () => {
-  const uploaded: string[] = [];
+test("the alert search covers 365 days and leaves statement files out", () => {
+  assert.match(spotTxnQuery, /newer_than:365d/);
+  assert.match(spotTxnQuery, /-filename:pdf/);
+  assert.match(spotTxnQuery, /debited/);
+  assert.equal(spotTxnQuery.includes("filename:(pdf"), false);
+});
+
+test("history expiry falls back to search, an empty page does not, and a debit alert is staged", async () => {
+  const staged: SpotSave[] = [];
   const checkpoints: string[] = [];
   const dueDates: string[] = [];
+  const queries: string[] = [];
   let historyStatus = 404;
   const fetchImpl: PollFetch = async (url) => {
     if (url.includes("oauth.example")) {
@@ -62,7 +70,8 @@ test("history expiry falls back to search, an empty page does not, and reminders
     }
     if (url.includes("/messages?")) {
       const query = new URL(url).searchParams.get("q") ?? "";
-      const id = query.includes("filename:") ? "file-1" : "due-1";
+      queries.push(query);
+      const id = query.includes("debited") ? "alert-1" : "due-1";
       return { status: 200, json: async () => ({ messages: [{ id }] }) };
     }
     if (url.endsWith("/profile")) {
@@ -70,70 +79,88 @@ test("history expiry falls back to search, an empty page does not, and reminders
     }
     return { status: 500, json: async () => ({}) };
   };
-  const searched = await pollConnection(connection(null), ports(fetchImpl, uploaded, checkpoints, dueDates));
+  const searched = await pollConnection(connection(null), ports(fetchImpl, staged, checkpoints, dueDates));
   assert.deepEqual(searched, { stored: 1, skipped: 0 });
-  assert.deepEqual(uploaded, ["cams-statement.pdf"]);
+  assert.equal(staged[0]?.flow, "DEBIT");
+  assert.equal(staged[0]?.amount, "350.00");
+  assert.equal(staged[0]?.channel, "UPI");
+  assert.equal(staged[0]?.idempotencyKey, "ref:429182736451");
   assert.deepEqual(checkpoints, ["88"]);
-  assert.equal(dueDates.length, 2);
+  assert.deepEqual(dueDates, ["2026-11-02"]);
+  assert.equal(queries.some((query) => query === spotTxnQuery), true);
 
-  uploaded.length = 0;
+  staged.length = 0;
   checkpoints.length = 0;
   historyStatus = 200;
-  await pollConnection(connection("10"), ports(fetchImpl, uploaded, checkpoints, dueDates));
-  assert.deepEqual(uploaded, []);
+  await pollConnection(connection("10"), ports(fetchImpl, staged, checkpoints, dueDates));
+  assert.deepEqual(staged, []);
   assert.deepEqual(checkpoints, []);
 });
 
-test("a pending authorize result finishes the upload", async () => {
-  const completed: string[] = [];
+test("a drained mailbox parses a new alert and ignores a pdf-only message", async () => {
+  const staged: SpotSave[] = [];
   const checkpoints: string[] = [];
-  await pollConnection(connection(null), searchPorts({
-    authorize: async () => ({ outcome: "pending", importId: "imp_existing_999" }),
-    complete: async (input) => {
-      completed.push(input.importId);
-    },
-    setCheckpoint: async (checkpoint) => {
-      checkpoints.push(checkpoint);
-    },
-  }));
-  assert.deepEqual(completed, ["imp_existing_999"]);
-  assert.deepEqual(checkpoints, ["88"]);
+  const fetchImpl: PollFetch = async (url) => {
+    if (url.includes("oauth.example")) {
+      return { status: 200, json: async () => ({ access_token: "access-token" }) };
+    }
+    if (url.includes("/history")) {
+      return {
+        status: 200,
+        json: async () => ({
+          history: [{
+            id: "15",
+            messagesAdded: [{ message: { id: "alert-1" } }, { message: { id: "file-1" } }],
+          }],
+        }),
+      };
+    }
+    if (url.includes("/messages/") && url.includes("format=raw")) {
+      const id = decodeURIComponent(url.split("/messages/")[1]?.split("?")[0] ?? "");
+      return { status: 200, json: async () => ({ raw: Buffer.from(rawMessage(id), "latin1").toString("base64url") }) };
+    }
+    return { status: 500, json: async () => ({}) };
+  };
+  const synced = await pollConnection(connection("10"), ports(fetchImpl, staged, checkpoints, []));
+  assert.deepEqual(synced, { stored: 1, skipped: 0 });
+  assert.deepEqual(staged.map((row) => row.messageId), ["alert-1"]);
+  assert.deepEqual(checkpoints, ["15"]);
 });
 
-test("an oversized attachment is skipped and the checkpoint is still saved", async () => {
-  let authorized = 0;
+test("a dry run logs the alert and does not stage it", async () => {
+  const staged: SpotSave[] = [];
   const checkpoints: string[] = [];
-  const pdf = Buffer.alloc(11 * 1024 * 1024, 1);
-  const skipped = await pollConnection(connection(null), searchPorts({
-    rawFor: (id) => id === "file-1" ? attachmentMessage(pdf, "large.pdf") : undefined,
-    authorize: async () => {
-      authorized += 1;
-      return { outcome: "created", importId: "import-1" };
+  const logs: Record<string, unknown>[] = [];
+  const fetchImpl: PollFetch = async (url) => {
+    if (url.includes("oauth.example")) {
+      return { status: 200, json: async () => ({ access_token: "access-token" }) };
+    }
+    if (url.includes("/messages/") && url.includes("format=raw")) {
+      return { status: 200, json: async () => ({ raw: Buffer.from(rawMessage("alert-1"), "latin1").toString("base64url") }) };
+    }
+    if (url.includes("/messages?")) {
+      const query = new URL(url).searchParams.get("q") ?? "";
+      return { status: 200, json: async () => ({ messages: query.includes("debited") ? [{ id: "alert-1" }] : [] }) };
+    }
+    if (url.endsWith("/profile")) {
+      return { status: 200, json: async () => ({ historyId: "88" }) };
+    }
+    return { status: 500, json: async () => ({}) };
+  };
+  const result = await pollConnection(connection(null), {
+    ...ports(fetchImpl, staged, checkpoints, []),
+    dryRun: true,
+    debug: (event) => {
+      logs.push(event);
     },
-    setCheckpoint: async (checkpoint) => {
-      checkpoints.push(checkpoint);
-    },
-  }));
-  assert.deepEqual(skipped, { stored: 0, skipped: 1 });
-  assert.equal(authorized, 0);
-  assert.deepEqual(checkpoints, ["88"]);
-});
-
-test("a forbidden authorize result does not save the checkpoint", async () => {
-  const checkpoints: string[] = [];
-  await assert.rejects(
-    () => pollConnection(connection(null), searchPorts({
-      authorize: async () => ({ outcome: "forbidden", importId: null }),
-      setCheckpoint: async (checkpoint) => {
-        checkpoints.push(checkpoint);
-      },
-    })),
-    (error: unknown) => {
-      assert.equal(workerFailure(error).code, "forbidden");
-      return true;
-    },
-  );
+  });
+  assert.deepEqual(result, { stored: 0, skipped: 0 });
+  assert.deepEqual(staged, []);
   assert.deepEqual(checkpoints, []);
+  assert.equal(logs[0]?.amount, "350.00");
+  assert.equal(logs[0]?.flow, "DEBIT");
+  assert.equal(logs[0]?.channel, "UPI");
+  assert.equal(JSON.stringify(logs).includes("Avail Bal"), false);
 });
 
 function connection(historyCheckpoint: string | null) {
@@ -149,7 +176,7 @@ function connection(historyCheckpoint: string | null) {
 
 function ports(
   fetchImpl: PollFetch,
-  uploaded: string[],
+  staged: SpotSave[],
   checkpoints: string[],
   dueDates: string[],
 ): PollPorts {
@@ -158,97 +185,19 @@ function ports(
     clientId: "client",
     clientSecret: "secret",
     tokenUri: "https://oauth.example/token",
-    alreadyImported: async () => false,
     saveCandidate: async () => undefined,
-    saveHandoff: async () => undefined,
     saveDueDate: async (due) => {
       dueDates.push(due.dueDate);
     },
-    authorize: async (input) => {
-      uploaded.push(input.filename);
-      assert.equal(input.sourceMetadata.pipeline_target, "MUTUAL_FUNDS");
-      assert.equal(input.sourceMetadata.channel, "gmail");
-      return { outcome: "created", importId: "import-1" };
+    saveSpotTransaction: async (input) => {
+      staged.push(input);
+      return "created";
     },
-    storage: {
-      async putObject() {
-        return "etag";
-      },
-      async copyObject() {
-        return "etag";
-      },
-      async deleteObject() {
-        return undefined;
-      },
-      async presignUpload() {
-        return { url: "", headers: {} };
-      },
-      async readObject() {
-        return null;
-      },
-      async probe() {
-        return undefined;
-      },
-      async close() {
-        return undefined;
-      },
-    },
-    complete: async () => undefined,
     setCheckpoint: async (checkpoint) => {
       checkpoints.push(checkpoint);
     },
     markWindowDrained: async () => undefined,
   };
-}
-
-function searchPorts(input: {
-  authorize: PollPorts["authorize"];
-  complete?: PollPorts["complete"];
-  setCheckpoint: PollPorts["setCheckpoint"];
-  rawFor?: (id: string) => string | undefined;
-}): PollPorts {
-  const fetchImpl: PollFetch = async (url) => {
-    if (url.includes("oauth.example")) {
-      return { status: 200, json: async () => ({ access_token: "access-token" }) };
-    }
-    if (url.includes("/messages/") && url.includes("format=raw")) {
-      const id = decodeURIComponent(url.split("/messages/")[1]?.split("?")[0] ?? "");
-      const raw = input.rawFor?.(id) ?? rawMessage(id);
-      return { status: 200, json: async () => ({ raw: Buffer.from(raw, "latin1").toString("base64url") }) };
-    }
-    if (url.includes("/messages?")) {
-      const query = new URL(url).searchParams.get("q") ?? "";
-      const id = query.includes("filename:") ? "file-1" : "due-1";
-      return { status: 200, json: async () => ({ messages: [{ id }] }) };
-    }
-    if (url.endsWith("/profile")) {
-      return { status: 200, json: async () => ({ historyId: "88" }) };
-    }
-    return { status: 500, json: async () => ({}) };
-  };
-  return {
-    ...ports(fetchImpl, [], [], []),
-    fetchImpl,
-    authorize: input.authorize,
-    complete: input.complete ?? (async () => undefined),
-    setCheckpoint: input.setCheckpoint,
-  };
-}
-
-function attachmentMessage(pdf: Buffer, filename: string): string {
-  return [
-    "From: statements@example.com",
-    "Content-Type: multipart/mixed; boundary=bound",
-    "",
-    "--bound",
-    "Content-Type: application/pdf",
-    `Content-Disposition: attachment; filename="${filename}"`,
-    "Content-Transfer-Encoding: base64",
-    "",
-    pdf.toString("base64"),
-    "--bound--",
-    "",
-  ].join("\r\n");
 }
 
 function rawMessage(id: string): string {
@@ -261,22 +210,31 @@ function rawMessage(id: string): string {
       "Amount due Rs 99. Due date: 02/11/2026",
     ].join("\r\n");
   }
-  const pdf = Buffer.from("%PDF-1.4");
+  if (id === "file-1") {
+    const pdf = Buffer.from("%PDF-1.4");
+    return [
+      "From: statements@example.com",
+      "Content-Type: multipart/mixed; boundary=bound",
+      "",
+      "--bound",
+      "Content-Type: text/plain",
+      "",
+      "Your statement is attached.",
+      "--bound",
+      "Content-Type: application/pdf",
+      "Content-Disposition: attachment; filename=\"statement.pdf\"",
+      "Content-Transfer-Encoding: base64",
+      "",
+      pdf.toString("base64"),
+      "--bound--",
+      "",
+    ].join("\r\n");
+  }
   return [
-    "From: statements@camsonline.com",
-    "Content-Type: multipart/mixed; boundary=bound",
-    "",
-    "--bound",
+    "From: alerts@hdfcbank.com",
+    "Date: Sat, 18 Oct 2026 05:15:12 +0000",
     "Content-Type: text/plain",
     "",
-    "Amount due Rs 10. Due date: 01/11/2026",
-    "--bound",
-    "Content-Type: application/pdf",
-    "Content-Disposition: attachment; filename=\"cams-statement.pdf\"",
-    "Content-Transfer-Encoding: base64",
-    "",
-    pdf.toString("base64"),
-    "--bound--",
-    "",
+    "Your A/C ending 4321 has been debited by INR 350.00 on 18-Oct-2026 10:45:12 via UPI ref 429182736451 to Swiggy. Avail Bal: INR 12,450.00.",
   ].join("\r\n");
 }

@@ -64,6 +64,7 @@ const app = await buildApp({
     redirectUri: process.env.GMAIL_REDIRECT_URI?.trim() ?? "",
     tokenUri: process.env.GMAIL_TOKEN_URI?.trim() ?? "",
     encryptionKey: process.env.GMAIL_TOKEN_ENCRYPTION_KEY?.trim() ?? "",
+    pubsubTopic: process.env.GMAIL_PUBSUB_TOPIC?.trim() ?? "",
   },
 });
 

@@ -153,3 +153,49 @@ test("an in-app account code is sealed without the browser redirect", async () =
   assert.equal(store.saved.length, 1);
   await app.close();
 });
+
+test("connect registers a mailbox watch when a pubsub topic is configured", async () => {
+  const signed = await signToken({ subject: "user-1", expiresIn: "1h" });
+  const store = new MemoryGmailConnectStore();
+  let watched: { accessToken: string; topic: string } | null = null;
+  signed.options.identity = {
+    async provisionActor() {
+      return { actorId: "actor-1" };
+    },
+    async resolveOwner() {
+      return "owner-1";
+    },
+    async ping() {},
+    async close() {},
+  };
+  signed.options.gmailConnect = {
+    store,
+    clientId: "client-id",
+    clientSecret: "client-secret",
+    redirectUri: "https://api.monytix.ai/gmail/oauth/callback",
+    tokenUri: "https://oauth.example/token",
+    encryptionKey: "test-key",
+    pubsubTopic: "projects/demo/topics/gmail-txns",
+    exchange: async () => ({
+      refreshToken: "1//mailbox-credential",
+      email: "Owner@Example.com",
+      accessToken: "ya29.access",
+    }),
+    watch: async (input) => {
+      watched = input;
+      return { expiresAt: "2026-10-25T00:00:00.000Z" };
+    },
+  };
+  const app = await buildApp(signed.options);
+  const saved = await app.inject({
+    method: "POST",
+    url: "/v1/gmail/connect/code",
+    headers: { authorization: `Bearer ${signed.token}` },
+    payload: { code: "server-auth-code" },
+  });
+  assert.equal(saved.statusCode, 200);
+  assert.deepEqual(watched, { accessToken: "ya29.access", topic: "projects/demo/topics/gmail-txns" });
+  assert.equal(store.saved[0]?.watchExpiresAt, "2026-10-25T00:00:00.000Z");
+  assert.equal(JSON.stringify(saved.json()).includes("ya29.access"), false);
+  await app.close();
+});

@@ -78,6 +78,16 @@ export function messageFrom(raw: string): string {
   return head.match(/^from:\s*(.+)$/im)?.[1]?.trim() ?? "";
 }
 
+export function messageDate(raw: string): string | undefined {
+  const head = raw.split(/\r?\n\r?\n/)[0] ?? "";
+  const value = head.match(/^date:\s*(.+)$/im)?.[1]?.trim();
+  if (!value) {
+    return undefined;
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
+}
+
 export function importInitiation(handoff: AttachmentHandoff): {
   file_type: AttachmentHandoff["fileType"];
   byte_size: number;

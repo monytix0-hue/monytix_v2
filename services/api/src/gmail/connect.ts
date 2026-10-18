@@ -14,7 +14,12 @@ export type GmailCodeExchange = (input: {
   clientSecret: string;
   redirectUri: string;
   tokenUri: string;
-}) => Promise<{ refreshToken: string; email: string }>;
+}) => Promise<{ refreshToken: string; email: string; accessToken?: string }>;
+
+export type GmailWatch = (input: {
+  accessToken: string;
+  topic: string;
+}) => Promise<{ expiresAt: string } | null>;
 
 export type GmailConnectOptions = {
   store: GmailConnectStore | null;
@@ -23,7 +28,9 @@ export type GmailConnectOptions = {
   redirectUri: string;
   tokenUri: string;
   encryptionKey: string;
+  pubsubTopic?: string;
   exchange?: GmailCodeExchange;
+  watch?: GmailWatch;
 };
 
 export const gmailConnectRoutes: FastifyPluginAsync<GmailConnectOptions> = async (app, options) => {
@@ -85,6 +92,7 @@ export const gmailConnectRoutes: FastifyPluginAsync<GmailConnectOptions> = async
         credentialRef: credentialPointer(),
         ciphertext,
       });
+      await rememberWatch(options, request.ownerId, exchanged.email, exchanged.accessToken);
     } catch (error) {
       const missingRefresh = error instanceof GmailExchangeError && error.reason === "refresh_token";
       return reply.status(422).send({ error: missingRefresh ? "refresh_token" : "exchange" });
@@ -118,6 +126,7 @@ export const gmailConnectRoutes: FastifyPluginAsync<GmailConnectOptions> = async
         credentialRef: credentialPointer(),
         ciphertext,
       });
+      await rememberWatch(options, ownerId, exchanged.email, exchanged.accessToken);
     } catch {
       return returnToApp(reply, "exchange");
     }
@@ -176,13 +185,55 @@ function readServerCode(body: unknown): string {
   return typeof code === "string" ? code.trim() : "";
 }
 
+export async function registerGmailWatch(input: { accessToken: string; topic: string }): Promise<{ expiresAt: string } | null> {
+  const response = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/watch", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${input.accessToken}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ topicName: input.topic, labelIds: ["INBOX"] }),
+  });
+  if (!response.ok) {
+    return null;
+  }
+  const body = await response.json() as { expiration?: unknown };
+  const expiration = typeof body.expiration === "number" ? String(body.expiration) : body.expiration;
+  if (typeof expiration !== "string" || !/^[0-9]+$/.test(expiration)) {
+    return null;
+  }
+  const expiresAt = new Date(Number(expiration));
+  return Number.isNaN(expiresAt.getTime()) ? null : { expiresAt: expiresAt.toISOString() };
+}
+
+async function rememberWatch(
+  options: GmailConnectOptions,
+  ownerId: string,
+  mailbox: string,
+  accessToken: string | undefined,
+): Promise<void> {
+  const topic = options.pubsubTopic?.trim() ?? "";
+  if (!topic || !accessToken || !options.store) {
+    return;
+  }
+  try {
+    const watched = await (options.watch ?? registerGmailWatch)({ accessToken, topic });
+    if (!watched) {
+      return;
+    }
+    await options.store.setWatch({ ownerId, mailbox, expiresAt: watched.expiresAt });
+  } catch {
+    return;
+  }
+}
+
 export async function exchangeGoogleCode(input: {
   code: string;
   clientId: string;
   clientSecret: string;
   redirectUri: string;
   tokenUri: string;
-}): Promise<{ refreshToken: string; email: string }> {
+}): Promise<{ refreshToken: string; email: string; accessToken?: string }> {
   const response = await fetch(input.tokenUri, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -197,8 +248,9 @@ export async function exchangeGoogleCode(input: {
   if (!response.ok) {
     throw new GmailExchangeError("exchange");
   }
-  const json = await response.json() as { refresh_token?: unknown; id_token?: unknown };
+  const json = await response.json() as { refresh_token?: unknown; id_token?: unknown; access_token?: unknown };
   const refreshToken = typeof json.refresh_token === "string" ? json.refresh_token : "";
+  const accessToken = typeof json.access_token === "string" ? json.access_token : undefined;
   const email = emailFromIdToken(typeof json.id_token === "string" ? json.id_token : "");
   if (!refreshToken) {
     throw new GmailExchangeError("refresh_token");
@@ -206,7 +258,7 @@ export async function exchangeGoogleCode(input: {
   if (!email) {
     throw new GmailExchangeError("exchange");
   }
-  return { refreshToken, email };
+  return { refreshToken, email, accessToken };
 }
 
 function emailFromIdToken(token: string): string {

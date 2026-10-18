@@ -11,6 +11,11 @@ export type GmailConnectStore = {
     credentialRef: string;
     ciphertext: string;
   }): Promise<void>;
+  setWatch(input: {
+    ownerId: string;
+    mailbox: string;
+    expiresAt: string;
+  }): Promise<void>;
   close?: () => Promise<void>;
 };
 
@@ -19,6 +24,7 @@ type SavedConnection = {
   mailbox: string;
   credentialRef: string;
   ciphertext: string;
+  watchExpiresAt?: string;
 };
 
 export class MemoryGmailConnectStore implements GmailConnectStore {
@@ -52,6 +58,14 @@ export class MemoryGmailConnectStore implements GmailConnectStore {
     }
     this.saved.push({ ...input, mailbox });
   }
+
+  async setWatch(input: { ownerId: string; mailbox: string; expiresAt: string }): Promise<void> {
+    const mailbox = input.mailbox.trim().toLowerCase();
+    const existing = this.saved.find((row) => row.ownerId === input.ownerId && row.mailbox === mailbox);
+    if (existing) {
+      existing.watchExpiresAt = input.expiresAt;
+    }
+  }
 }
 
 export function createPgGmailConnectStore(databaseUrl: string): GmailConnectStore {
@@ -74,6 +88,13 @@ export function createPgGmailConnectStore(databaseUrl: string): GmailConnectStor
         input.mailbox,
         input.credentialRef,
         input.ciphertext,
+      ]);
+    },
+    async setWatch(input) {
+      await pool.query("SELECT ops.set_gmail_watch($1::uuid, $2, $3::timestamptz)", [
+        input.ownerId,
+        input.mailbox,
+        input.expiresAt,
       ]);
     },
     async close() {

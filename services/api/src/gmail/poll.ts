@@ -1,21 +1,15 @@
-import { finalObjectKey } from "../imports/store.js";
-import type { ObjectStorage } from "../imports/storage.js";
-import { extractMimeMessage, messageFrom, type ExtractedHandoff } from "./mime.js";
-import { detectPipelineTarget } from "./pipeline.js";
+import { parseTransactionFromEmail, spotIdempotencyKey, type SpotAlert } from "./alertParser.js";
+import { redactGmailLog } from "./log.js";
+import { extractMimeMessage, messageDate, type ExtractedText } from "./mime.js";
 import { readDueDate } from "./reminders.js";
 
 const gmailApi = "https://gmail.googleapis.com/gmail/v1/users/me";
-const attachmentQuery = "newer_than:90d filename:(pdf OR csv OR xls OR xlsx)";
+export const spotTxnQuery = [
+  "newer_than:365d",
+  "-filename:pdf -filename:csv -filename:xls -filename:xlsx",
+  '("debited" OR "credited" OR "spent" OR "sent" OR "received" OR "paid" OR "transaction alert")',
+].join(" ");
 const reminderQuery = 'newer_than:90d (subject:due OR subject:premium OR subject:renewal OR subject:"amount due")';
-
-const maxAttachmentBytes = 10 * 1024 * 1024;
-
-const fileMime: Record<ExtractedHandoff["fileType"], string> = {
-  PDF: "application/pdf",
-  CSV: "text/csv",
-  XLS: "application/vnd.ms-excel",
-  XLSX: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-};
 
 export type PollFetch = (url: string, init?: RequestInit) => Promise<PollResponse>;
 
@@ -33,12 +27,26 @@ export type PollConnection = {
   initialWindowDrained: boolean;
 };
 
+export type SpotSave = {
+  messageId: string;
+  idempotencyKey: string;
+  flow: SpotAlert["flow"];
+  amount: string;
+  accountLast4?: string;
+  paymentRef?: string;
+  channel: SpotAlert["channel"];
+  counterparty: string;
+  postedAt?: string;
+  rawExcerpt: string;
+};
+
 export type PollPorts = {
   fetchImpl: PollFetch;
   clientId: string;
   clientSecret: string;
   tokenUri: string;
-  alreadyImported: (messageId: string, partIndex: number, idempotencyKey: string) => Promise<boolean>;
+  dryRun?: boolean;
+  debug?: (event: Record<string, unknown>) => void;
   saveCandidate: (input: {
     messageId: string;
     partIndex: number;
@@ -46,7 +54,6 @@ export type PollPorts = {
     contentSha256: string;
     provenance: Record<string, unknown>;
   }) => Promise<void>;
-  saveHandoff: (handoff: ExtractedHandoff) => Promise<void>;
   saveDueDate: (input: {
     messageId: string;
     biller: string;
@@ -54,22 +61,7 @@ export type PollPorts = {
     dueDate: string;
     category: string;
   }) => Promise<void>;
-  authorize: (input: {
-    idempotencyKey: string;
-    fileType: string;
-    byteSize: number;
-    sha256: string;
-    filename: string;
-    sourceMetadata: Record<string, unknown>;
-  }) => Promise<{ outcome: string; importId: string | null }>;
-  storage: ObjectStorage;
-  complete: (input: {
-    importId: string;
-    size: number;
-    mime: string;
-    sha256: string;
-    etag: string;
-  }) => Promise<void>;
+  saveSpotTransaction: (input: SpotSave) => Promise<"created" | "replay">;
   setCheckpoint: (checkpoint: string) => Promise<void>;
   markWindowDrained: () => Promise<void>;
 };
@@ -86,7 +78,9 @@ export async function pollConnection(connection: PollConnection, ports: PollPort
   const accessToken = await refreshAccessToken(connection.refreshToken, ports);
   if (!connection.initialWindowDrained) {
     const totals = await searchMailbox(connection, accessToken, ports);
-    await ports.markWindowDrained();
+    if (!ports.dryRun) {
+      await ports.markWindowDrained();
+    }
     return totals;
   }
   if (connection.historyCheckpoint) {
@@ -102,7 +96,9 @@ export async function pollConnection(connection: PollConnection, ports: PollPort
       for (const messageId of record.messageIds) {
         totals = addPoll(totals, await readMessage(connection, accessToken, messageId, true, ports));
       }
-      await ports.setCheckpoint(record.id);
+      if (!ports.dryRun) {
+        await ports.setCheckpoint(record.id);
+      }
     }
     return totals;
   }
@@ -111,8 +107,8 @@ export async function pollConnection(connection: PollConnection, ports: PollPort
 
 async function searchMailbox(connection: PollConnection, accessToken: string, ports: PollPorts): Promise<PollResult> {
   let totals = emptyPoll;
-  const attachments = await listAllMatchingMessages(ports.fetchImpl, accessToken, attachmentQuery);
-  for (const messageId of attachments) {
+  const alerts = await listAllMatchingMessages(ports.fetchImpl, accessToken, spotTxnQuery);
+  for (const messageId of alerts) {
     totals = addPoll(totals, await readMessage(connection, accessToken, messageId, true, ports));
   }
   const reminders = await listAllMatchingMessages(ports.fetchImpl, accessToken, reminderQuery);
@@ -121,7 +117,7 @@ async function searchMailbox(connection: PollConnection, accessToken: string, po
   }
   const profile = await gmailJson(accessToken, `${gmailApi}/profile`, ports.fetchImpl);
   const historyId = textField(profile, "historyId");
-  if (historyId) {
+  if (historyId && !ports.dryRun) {
     await ports.setCheckpoint(historyId);
   }
   return totals;
@@ -146,103 +142,65 @@ async function readMessage(
     gmailMessageId: messageId,
     raw,
   });
-  for (const candidate of extracted.candidates) {
-    await ports.saveCandidate({
-      messageId,
-      partIndex: candidate.partIndex,
-      mimeType: candidate.mimeType,
-      contentSha256: candidate.contentSha256,
-      provenance: candidate.provenance,
-    });
-  }
-  const reminder = readDueDate(extracted.texts.map((part) => part.text).join("\n"));
-  if (reminder) {
-    await ports.saveDueDate({ messageId, ...reminder });
+  const body = alertBody(extracted.texts);
+  if (!ports.dryRun) {
+    for (const candidate of extracted.candidates) {
+      await ports.saveCandidate({
+        messageId,
+        partIndex: candidate.partIndex,
+        mimeType: candidate.mimeType,
+        contentSha256: candidate.contentSha256,
+        provenance: candidate.provenance,
+      });
+    }
+    const reminder = readDueDate(body);
+    if (reminder) {
+      await ports.saveDueDate({ messageId, ...reminder });
+    }
   }
   if (!allowImport) {
     return emptyPoll;
   }
-  let totals = emptyPoll;
-  const sender = messageFrom(raw);
-  for (const handoff of extracted.handoffs) {
-    const idempotencyKey = `gmail:${connection.gmailConnectionId}:${messageId}:${handoff.partIndex}`;
-    if (await ports.alreadyImported(messageId, handoff.partIndex, idempotencyKey)) {
-      continue;
-    }
-    if (!isValidAttachmentSize(handoff.byteSize)) {
-      totals = addPoll(totals, { stored: 0, skipped: 1 });
-      continue;
-    }
-    const filename = sanitizeFilename(handoff.originalFilename, handoff.fileType);
-    const pipelineTarget = detectPipelineTarget(filename, sender);
-    const authorized = await ports.authorize({
-      idempotencyKey,
-      fileType: handoff.fileType,
-      byteSize: handoff.byteSize,
-      sha256: handoff.sha256,
-      filename,
-      sourceMetadata: {
-        channel: "gmail",
-        gmail_connection_id: connection.gmailConnectionId,
-        gmail_message_id: messageId,
-        part_index: handoff.partIndex,
-        pipeline_target: pipelineTarget,
-        sender,
-      },
-    });
-    if (authorized.outcome === "forbidden") {
-      throw workerError("gmail statement authorize forbidden", "forbidden");
-    }
-    if (authorized.outcome === "invalid" || authorized.outcome === "conflict") {
-      totals = addPoll(totals, { stored: 0, skipped: 1 });
-      continue;
-    }
-    if (authorized.outcome !== "created" && authorized.outcome !== "replay" && authorized.outcome !== "pending") {
-      totals = addPoll(totals, { stored: 0, skipped: 1 });
-      continue;
-    }
-    if (!authorized.importId) {
-      totals = addPoll(totals, { stored: 0, skipped: 1 });
-      continue;
-    }
-    const stagingKey = `owners/${connection.ownerId}/imports/${authorized.importId}/staging`;
-    await ports.storage.putObject({
-      key: stagingKey,
-      body: handoff.bytes,
-      contentType: fileMime[handoff.fileType],
-    });
-    const etag = await ports.storage.copyObject(stagingKey, finalObjectKey(connection.ownerId, authorized.importId));
-    await ports.storage.deleteObject(stagingKey);
-    await ports.complete({
-      importId: authorized.importId,
-      size: handoff.byteSize,
-      mime: fileMime[handoff.fileType],
-      sha256: handoff.sha256,
-      etag: etag.replaceAll("\"", ""),
-    });
-    await ports.saveHandoff({ ...handoff, originalFilename: filename });
-    totals = addPoll(totals, { stored: 1, skipped: 0 });
+  const alert = parseTransactionFromEmail(body, { postedAt: messageDate(raw) });
+  if (!alert) {
+    return emptyPoll;
   }
-  return totals;
+  if (ports.dryRun) {
+    const entry = redactGmailLog({
+      event: "debug_ingest",
+      messageId,
+      amount: alert.amount,
+      flow: alert.flow,
+      channel: alert.channel,
+      counterparty: alert.counterparty,
+      paymentRef: alert.paymentRef ?? null,
+    });
+    (ports.debug ?? logDryRun)(entry as Record<string, unknown>);
+    return emptyPoll;
+  }
+  const outcome = await ports.saveSpotTransaction({
+    messageId,
+    idempotencyKey: spotIdempotencyKey(connection.ownerId, alert),
+    flow: alert.flow,
+    amount: alert.amount,
+    accountLast4: alert.accountLast4,
+    paymentRef: alert.paymentRef,
+    channel: alert.channel,
+    counterparty: alert.counterparty,
+    postedAt: alert.postedAt,
+    rawExcerpt: alert.rawExcerpt,
+  });
+  return outcome === "created" ? { stored: 1, skipped: 0 } : { stored: 0, skipped: 1 };
 }
 
-function isValidAttachmentSize(byteLength: number): boolean {
-  return byteLength > 0 && byteLength <= maxAttachmentBytes;
+function alertBody(texts: ExtractedText[]): string {
+  const plain = texts.filter((part) => part.mimeType === "text/plain").map((part) => part.text);
+  const chosen = plain.length > 0 ? plain : texts.map((part) => part.text);
+  return chosen.join("\n");
 }
 
-function sanitizeFilename(rawFilename: string | undefined, fileType: ExtractedHandoff["fileType"]): string {
-  let cleaned = (rawFilename ?? "").replace(/[\u0000-\u001F\u007F/\\]/g, "").trim();
-  if (cleaned.length > 255) {
-    const extMatch = cleaned.match(/\.([a-zA-Z0-9]+)$/);
-    const ext = extMatch ? `.${extMatch[1]}` : "";
-    const room = 255 - ext.length;
-    cleaned = room > 0 ? cleaned.slice(0, room) + ext : cleaned.slice(0, 255);
-  }
-  if (!cleaned) {
-    const ext = fileType === "CSV" ? "csv" : fileType === "XLS" ? "xls" : fileType === "XLSX" ? "xlsx" : "pdf";
-    return `statement.${ext}`;
-  }
-  return cleaned;
+function logDryRun(event: Record<string, unknown>): void {
+  console.log(JSON.stringify(event));
 }
 
 async function refreshAccessToken(refreshToken: string, ports: PollPorts): Promise<string> {

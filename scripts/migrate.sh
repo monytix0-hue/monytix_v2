@@ -76,6 +76,15 @@ for file in $(find /database/migrations -maxdepth 1 -type f -name '*.sql' | sort
     0030_gmail_window_drained.sql) code="GMAIL-WINDOW-DRAINED" ;;
     0031_gmail_spot_transaction.sql) code="GMAIL-SPOT-ALERT" ;;
     0032_gmail_spot_promote.sql) code="GMAIL-SPOT-PROMOTE" ;;
+    0033_finance_normalized.sql) code="FINANCE-NORMALIZED" ;;
+    0034_finance_fx_rates.sql) code="FINANCE-FX-RATES" ;;
+    0035_clearing_taxonomy.sql) code="CLEARING-TAXONOMY" ;;
+    0036_ledger_fee_parent.sql) code="LEDGER-FEE-PARENT" ;;
+    0037_ledger_channels.sql) code="LEDGER-CHANNELS" ;;
+    0038_human_context_f1_f5.sql) code="HUMAN-CONTEXT" ;;
+    0039_decisions_candidates.sql) code="DECISIONS-CANDIDATES" ;;
+    0040_action_missions.sql) code="ACTION-MISSIONS" ;;
+    0041_outcomes_mile.sql) code="OUTCOMES-MILE" ;;
     *) code="" ;;
   esac
 

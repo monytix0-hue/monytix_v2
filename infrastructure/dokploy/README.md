@@ -7,11 +7,10 @@ Dokploy loads only `docker-compose.yml` (not `docker-compose.override.yml`).
 ## Services
 
 | Service | Role | Port |
-|---------|------|------|
+|--------|------|------|
 | `migrator` | Apply `database/migrations` then exit | — |
 | `api` | Public Fastify edge (Firebase auth) | expose `8080` |
 | `scanner` / `gmail-worker` | Statement scan + Gmail poll | — |
-| `intelligence` | Legacy health stub | internal `8000` |
 | `clamav` | Malware scan | internal `3310` |
 | `redis` | Celery broker + finance home cache | internal `6379` |
 | `mongo` | Finance raw ingest + Gmail credentials | internal `27017` |
@@ -28,7 +27,7 @@ Copy from [.env.example](../../.env.example). At minimum set:
 - Postgres: `POSTGRES_*`, `DATABASE_URL`, `INTELLIGENCE_DATABASE_URL`, `API_DB_PASSWORD`, `INTELLIGENCE_DB_PASSWORD`
 - Auth: `FIREBASE_PROJECT_ID` and either `GOOGLE_APPLICATION_CREDENTIALS` (mounted file) or `GOOGLE_CREDENTIALS_JSON`
 - Object storage: `OBJECT_STORAGE_*`
-- Decision OS: `INTERNAL_TOKEN` (long random secret shared by finance-api, intelligence, and Celery)
+- Decision OS: `INTERNAL_TOKEN` (long random secret shared by finance-api, finance-intelligence, and Celery)
 - Optional Gmail / AA: `GMAIL_*`, `AA_*`, `AA_FIU_PRIVATE_KEY`
 
 Do not commit real passwords. Generate `INTERNAL_TOKEN` once and keep it stable across redeploys so in-flight Celery jobs keep authenticating.

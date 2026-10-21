@@ -28,7 +28,6 @@ services:
       NODE_ENV: production
       PORT: 8080
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
-      INTELLIGENCE_URL: ${INTELLIGENCE_URL:-http://intelligence:8000}
       # Decision OS engine (backend-monytix). Empty disables the proxy.
       FINANCE_BACKEND_URL: ${FINANCE_BACKEND_URL:-http://finance-api:8090}
       FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:?FIREBASE_PROJECT_ID is required}
@@ -131,26 +130,6 @@ services:
     depends_on:
       migrator:
         condition: service_completed_successfully
-    restart: unless-stopped
-    mem_limit: 512m
-    cpus: 0.5
-
-  intelligence:
-    build:
-      context: .
-      dockerfile: infrastructure/docker/intelligence.Dockerfile
-    environment:
-      PORT: 8000
-      DATABASE_URL: ${INTELLIGENCE_DATABASE_URL:?INTELLIGENCE_DATABASE_URL is required}
-    depends_on:
-      migrator:
-        condition: service_completed_successfully
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
-      interval: 10s
-      timeout: 5s
-      retries: 6
-      start_period: 20s
     restart: unless-stopped
     mem_limit: 512m
     cpus: 0.5

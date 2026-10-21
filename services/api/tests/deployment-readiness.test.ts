@@ -24,11 +24,12 @@ test("compose requires credentials, health checks, and restarts", () => {
   assert.match(compose, /OBJECT_STORAGE_SECRET_ACCESS_KEY:\s\$\{OBJECT_STORAGE_SECRET_ACCESS_KEY:\?/);
   assert.match(compose, /DATABASE_URL:\s\$\{DATABASE_URL:\?/);
   assert.match(compose, /postgres:5432\/platform\/ready|fetch\('http:\/\/127\.0\.0\.1:8080\/platform\/ready'\)/);
-  assert.match(compose, /8000\/health/);
+  assert.match(compose, /8091\/health/);
   assert.match(compose, /clamdcheck\.sh/);
   assert.match(compose, /condition: service_healthy/);
   assert.match(compose, /restart: unless-stopped/);
-  assert.equal(compose.includes("redis"), false);
+  assert.match(compose, /finance-api/);
+  assert.match(compose, /finance-intelligence/);
 });
 
 test("migration script requires passwords and checks database roles", () => {

@@ -118,8 +118,7 @@ struct LiveDetailView: View {
     private var pulse: some View {
         gradientCard([palette.widgetWeight, palette.surface], palette.widgetWeightBorder) {
             HStack(spacing: PersonalSpace.s16) {
-                Image(systemName: "safari")
-                    .foregroundStyle(palette.textPrimary)
+                FigIcon(name: "FigActivity", size: 36)
                     .frame(width: 56, height: 56)
                     .background(palette.surface, in: Circle())
                     .overlay(Circle().stroke(palette.border, lineWidth: 1))
@@ -170,14 +169,23 @@ struct LiveDetailView: View {
             }
         }
         Text("What’s coming").personalText(.primary, size: 16, weight: .bold)
-        ForEach(0..<5, id: \.self) { _ in
+        let cashIcons = ["FigCashWallet", "FigCashLandmark", "FigCashReceipt", "FigCashArrow", "FigCashFlag"]
+        ForEach(Array(cashIcons.enumerated()), id: \.offset) { _, icon in
             card {
-                Text("Unavailable").personalText(.primary, size: 15, weight: .bold)
-                Text("Unavailable").personalText(.secondary, size: 14)
+                HStack(spacing: PersonalSpace.s12) {
+                    FigIcon(name: icon, size: 28)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Unavailable").personalText(.primary, size: 15, weight: .bold)
+                        Text("Unavailable").personalText(.secondary, size: 14)
+                    }
+                }
             }
         }
         card {
-            Text("Unavailable").personalText(.primary, size: 16, weight: .bold)
+            HStack(spacing: PersonalSpace.s12) {
+                FigIcon(name: "FigCashCheck", size: 24)
+                Text("Unavailable").personalText(.primary, size: 16, weight: .bold)
+            }
             Text("Unavailable").personalText(.secondary, size: 15)
         }
         detailButton("Ask Moly", action: onAskMoly)
@@ -221,9 +229,14 @@ struct LiveDetailView: View {
             ForEach(shown) { row in
                 let money = (row.amount?.isEmpty == false && row.currency?.isEmpty == false) ? "\(row.currency ?? "") \(row.amount ?? "")" : "Unavailable"
                 card {
-                    Text(row.description ?? "Unavailable").personalText(.primary, size: 16, weight: .bold)
-                    Text(money).personalText(.secondary, size: 15)
-                    Text(row.transactionDate ?? "Unavailable").personalText(.secondary, size: 13)
+                    HStack(spacing: PersonalSpace.s12) {
+                        FigIcon(name: row.direction == "IN" ? "FigCashArrow" : (row.direction == "OUT" ? "FigUtensils" : "FigTxUser"), size: 28)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(row.description ?? "Unavailable").personalText(.primary, size: 16, weight: .bold)
+                            Text(money).personalText(.secondary, size: 15)
+                            Text(row.transactionDate ?? "Unavailable").personalText(.secondary, size: 13)
+                        }
+                    }
                 }
             }
         } else {

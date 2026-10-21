@@ -131,6 +131,9 @@ async function readMessage(
   ports: PollPorts,
 ): Promise<PollResult> {
   const payload = await gmailJson(accessToken, `${gmailApi}/messages/${encodeURIComponent(messageId)}?format=raw`, ports.fetchImpl);
+  if (!payload) {
+    return emptyPoll;
+  }
   const rawField = textField(payload, "raw");
   if (!rawField) {
     return emptyPoll;
@@ -301,6 +304,9 @@ export async function listAllMatchingMessages(fetchImpl: PollFetch, accessToken:
 async function gmailJson(accessToken: string, url: string, fetchImpl: PollFetch): Promise<unknown> {
   const response = await fetchImpl(url, { headers: { authorization: `Bearer ${accessToken}` } });
   const payload = await response.json();
+  if (response.status === 404) {
+    return null;
+  }
   if (response.status !== 200) {
     throw workerError("gmail request failed", `http_${response.status}`);
   }

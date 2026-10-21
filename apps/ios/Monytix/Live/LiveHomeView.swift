@@ -131,13 +131,13 @@ struct LiveHomeView: View {
                 onOpen(.transactions)
             } label: {
                 HStack(spacing: PersonalSpace.s12) {
-                    Image(systemName: "receipt")
+                    FigIcon(name: "FigReceipt", size: 24)
                     Text("Transactions")
                         .font(.custom("Inter-SemiBold", size: 16))
                         .foregroundStyle(palette.textPrimary)
                     Spacer()
                     statusPill(transactionFact)
-                    Image(systemName: "chevron.right")
+                    FigIcon(name: "FigChevron", size: 20)
                 }
                 .padding(.horizontal, 18)
                 .padding(.vertical, 14)
@@ -148,6 +148,23 @@ struct LiveHomeView: View {
                 )
             }
             .buttonStyle(.plain)
+            if !snapshot.previews.isEmpty {
+                ForEach(snapshot.previews.prefix(8)) { row in
+                    let money = (row.amount?.isEmpty == false && row.currency?.isEmpty == false)
+                        ? "\(row.currency ?? "") \(row.amount ?? "")"
+                        : "Unavailable"
+                    HStack(spacing: PersonalSpace.s12) {
+                        FigIcon(name: row.direction == "IN" ? "FigCashArrow" : "FigUtensils", size: 24)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(row.description ?? "Unavailable")
+                                .personalText(.primary, size: 15, weight: .bold)
+                                .lineLimit(2)
+                            Text("\(money) · \(row.transactionDate ?? "Unavailable")")
+                                .personalText(.secondary, size: 13)
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -160,10 +177,13 @@ struct LiveHomeView: View {
                 Text("Unavailable").personalText(.secondary, size: 13)
             }
             .frame(maxWidth: .infinity)
-            VStack(alignment: .leading, spacing: PersonalSpace.s8) {
+            HStack(spacing: PersonalSpace.s12) {
+                FigIcon(name: "FigOrbitHaloSm", size: 36)
+                VStack(alignment: .leading, spacing: PersonalSpace.s8) {
                 Text(snapshot.activeMission?.title ?? "Unavailable").personalText(.primary, size: 14, weight: .bold)
                 Text(snapshot.activeMission?.line ?? "Unavailable").personalText(.secondary, size: 13)
                 Text(snapshot.activeMission?.progress ?? "Unavailable").personalText(.secondary, size: 13)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(PersonalSpace.s16)
@@ -176,8 +196,8 @@ struct LiveHomeView: View {
         plainCard(palette.widgetDecision, palette.widgetDecisionBorder) {
             cardHeading("DECISIONS")
             HStack(alignment: .top, spacing: PersonalSpace.s12) {
-                decisionTile("Strengthen your emergency cushion")
-                decisionTile("Review recurring spending")
+                decisionTile("FigBizShield", "Strengthen your emergency cushion")
+                decisionTile("FigBizShield2", "Review recurring spending")
             }
             goldButton("View Decisions  →") { onViewDecisions() }
         }
@@ -186,17 +206,24 @@ struct LiveHomeView: View {
     private var attention: some View {
         plainCard(palette.widgetChange, palette.widgetChangeBorder) {
             cardHeading("FOR YOU")
-            insight("chart.line.uptrend.xyaxis", "Spending pace")
-            insight("shield", "Emergency buffer")
+            insight("FigTrendingUp", "Spending pace")
+            insight("FigShieldAlert", "Emergency buffer")
             goldButton("See what changed  →") { onOpen(.forYou) }
         }
+    }
+
+    private var cashHeadline: String {
+        guard snapshot.recordedFlowAvailable, let row = snapshot.currencies.first else {
+            return "Unavailable"
+        }
+        return "\(row.currency) in \(row.inflow) · out \(row.outflow)"
     }
 
     private var cash: some View {
         gradientCard([palette.widgetCashStart, palette.widgetCashEnd], palette.widgetCashBorder) {
             cardHeading("CASH FLOW")
             HStack(alignment: .center, spacing: PersonalSpace.s8) {
-                Text("Unavailable").personalText(.primary, size: 16, weight: .bold)
+                Text(cashHeadline).personalText(.primary, size: 16, weight: .bold)
                 Text("flexible")
                     .font(.custom("Inter-Regular", size: 16))
                     .foregroundStyle(palette.textSecondary)
@@ -236,9 +263,9 @@ struct LiveHomeView: View {
                 statusPill("Unavailable")
             }
             HStack(alignment: .top, spacing: PersonalSpace.s8) {
-                weightTile("square.3.layers.3d", "Obligations")
-                weightTile("chart.line.uptrend.xyaxis", "Opportunity")
-                weightTile("shield", "Resilience")
+                weightTile("FigActivity", "Obligations")
+                weightTile("FigSprout", "Opportunity")
+                weightTile("FigShield", "Resilience")
             }
             goldButton("Explore your 10 Weights  →") { onOpen(.pulse) }
         }
@@ -301,9 +328,11 @@ struct LiveHomeView: View {
 
     private func progressRing(_ label: String) -> some View {
         ZStack {
-            Circle()
-                .stroke(palette.progressTrack, style: StrokeStyle(lineWidth: 8, lineCap: .round))
-                .frame(width: 84, height: 84)
+            FigIcon(name: "FigOrbitHalo", size: 96)
+            FigIcon(name: "FigOrbitTrack", size: 84)
+            FigIcon(name: "FigGoalFill", size: 72)
+            FigIcon(name: "FigProgressOrigin", size: 10).offset(y: 36)
+            FigIcon(name: "FigProgressMarker", size: 14).offset(x: 24, y: -22)
             Text(label)
                 .personalText(.primary, size: 16, weight: .bold)
                 .multilineTextAlignment(.center)
@@ -311,8 +340,9 @@ struct LiveHomeView: View {
         .frame(width: 96, height: 96)
     }
 
-    private func decisionTile(_ title: String) -> some View {
+    private func decisionTile(_ icon: String, _ title: String) -> some View {
         VStack(alignment: .leading, spacing: PersonalSpace.s8) {
+            FigIcon(name: icon, size: 28)
             Text(title).personalText(.primary, size: 14, weight: .bold)
             Text("Unavailable").personalText(.secondary, size: 13)
         }
@@ -323,8 +353,7 @@ struct LiveHomeView: View {
 
     private func insight(_ symbol: String, _ title: String) -> some View {
         HStack(alignment: .center, spacing: PersonalSpace.s12) {
-            Image(systemName: symbol)
-                .foregroundStyle(palette.textPrimary)
+            FigIcon(name: symbol, size: 28)
             VStack(alignment: .leading, spacing: PersonalSpace.s4) {
                 Text(title).personalText(.primary, size: 14, weight: .bold)
                 Text("Unavailable").personalText(.secondary, size: 13)
@@ -334,7 +363,7 @@ struct LiveHomeView: View {
 
     private func weightTile(_ symbol: String, _ title: String) -> some View {
         VStack(alignment: .leading, spacing: PersonalSpace.s8) {
-            Image(systemName: symbol).foregroundStyle(palette.textPrimary)
+            FigIcon(name: symbol, size: 22)
             Text(title).personalText(.primary, size: 11, weight: .bold)
             Text("Unavailable").personalText(.secondary, size: 12)
         }

@@ -56,6 +56,7 @@ private struct Chrome: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
+            Group {
             if destination == .live, page != .home {
                 LiveDetailView(
                     page: page,
@@ -151,6 +152,7 @@ private struct Chrome: View {
                 pill
                     .padding(.horizontal, PersonalSpace.s28)
                     .padding(.bottom, PersonalSpace.s8)
+            }
             }
             .overlay(alignment: .bottomTrailing) {
                 if addStep == nil {

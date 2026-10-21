@@ -23,7 +23,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.Explore
+import com.monytix.app.R
+import com.monytix.app.theme.FigIcon
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -155,7 +156,7 @@ private fun PulseDetail(onAskMoly: () -> Unit) {
                 modifier = Modifier.size(56.dp).clip(CircleShape).background(theme.palette.surface).border(1.dp, theme.palette.border, CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(Icons.Outlined.Explore, contentDescription = null, tint = theme.palette.textPrimary)
+                FigIcon(R.drawable.fig_activity, 36.dp)
             }
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
@@ -212,14 +213,28 @@ private fun CashDetail(snapshot: LiveSnapshot, onAskMoly: () -> Unit) {
         }
     }
     Text("What’s coming", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-    repeat(5) {
+    listOf(
+        R.drawable.fig_cash_wallet,
+        R.drawable.fig_cash_landmark,
+        R.drawable.fig_cash_receipt,
+        R.drawable.fig_cash_arrow,
+        R.drawable.fig_cash_flag,
+    ).forEach { icon ->
         PlainCard {
-            Text(Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-            Text(Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s12), verticalAlignment = Alignment.CenterVertically) {
+                FigIcon(icon, 28.dp)
+                Column {
+                    Text(Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text(Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
+                }
+            }
         }
     }
     PlainCard {
-        Text(Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s12), verticalAlignment = Alignment.CenterVertically) {
+            FigIcon(R.drawable.fig_cash_check, 24.dp)
+            Text(Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        }
         Text(Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
     }
     DetailButton("Ask Moly") { onAskMoly() }
@@ -264,9 +279,15 @@ private fun TransactionsDetail(snapshot: LiveSnapshot) {
             PlainCard {
                 val theme = LocalPersonalTheme.current
                 val money = if (!row.amount.isNullOrBlank() && !row.currency.isNullOrBlank()) "${row.currency} ${row.amount}" else Unavailable
-                Text(row.description ?: Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                Text(money, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
-                Text(row.transactionDate ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+                val mark = if (row.direction == "IN") R.drawable.fig_cash_arrow else if (row.direction == "OUT") R.drawable.fig_utensils else R.drawable.fig_tx_user
+                Row(horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s12), verticalAlignment = Alignment.CenterVertically) {
+                    FigIcon(mark, 28.dp)
+                    Column {
+                        Text(row.description ?: Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Text(money, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
+                        Text(row.transactionDate ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+                    }
+                }
             }
         }
     } else {

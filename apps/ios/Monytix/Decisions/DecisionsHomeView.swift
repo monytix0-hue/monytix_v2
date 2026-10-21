@@ -151,7 +151,7 @@ struct DecisionHomeView: View {
                 Button {
                     if let id = read.heaviest?.id { onOpen(id) }
                 } label: {
-                    decisionCard(read.heaviest)
+                    decisionCard(read.heaviest, icon: "FigBizShield")
                 }
                 .buttonStyle(.plain)
                 .disabled(read.heaviest?.id == nil)
@@ -160,8 +160,8 @@ struct DecisionHomeView: View {
                 if listed.isEmpty {
                     decisionCard(nil)
                 } else {
-                    ForEach(listed) { row in
-                        Button { onOpen(row.id) } label: { decisionCard(row) }
+                    ForEach(Array(listed.enumerated()), id: \.element.id) { index, row in
+                        Button { onOpen(row.id) } label: { decisionCard(row, icon: index.isMultiple(of: 2) ? "FigBizShield2" : "FigBizShield") }
                             .buttonStyle(.plain)
                     }
                 }
@@ -188,8 +188,9 @@ struct DecisionHomeView: View {
         .buttonStyle(.plain)
     }
 
-    private func decisionCard(_ row: PublishedDecision?) -> some View {
+    private func decisionCard(_ row: PublishedDecision?, icon: String = "FigBizShield") -> some View {
         card {
+            FigIcon(name: icon, size: 32)
             Text(row?.title ?? "Unavailable").personalText(.primary, size: 16, weight: .bold)
             Text(row?.amount ?? "Unavailable").personalText(.secondary, size: 15)
             Text(row?.timing ?? "Unavailable").personalText(.secondary, size: 13)

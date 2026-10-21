@@ -202,17 +202,17 @@ struct MissionHomeView: View {
                     .font(.custom("Inter-ExtraBold", size: 13))
                     .foregroundStyle(eyebrow)
                 if list.active.isEmpty {
-                    activeCard(nil) {}
+                    activeCard(nil, icon: "FigShieldPlus") {}
                 } else {
-                    ForEach(list.active) { row in
-                        activeCard(row) { onActive(row.id) }
+                    ForEach(Array(list.active.enumerated()), id: \.element.id) { index, row in
+                        activeCard(row, icon: missionIcon(index)) { onActive(row.id) }
                     }
                 }
                 Button(action: {
                     if let id = list.completed.first?.id { onCompleted(id) }
                 }) {
                     HStack(spacing: PersonalSpace.s8) {
-                        Image(systemName: "checkmark")
+                        FigIcon(name: "FigCashCheck", size: 18)
                         Text("Completed Missions").personalText(.primary, size: 15, weight: .bold)
                     }
                     .frame(maxWidth: .infinity)
@@ -234,13 +234,15 @@ struct MissionHomeView: View {
         }
     }
 
-    private func activeCard(_ row: MissionRow?, action: @escaping () -> Void) -> some View {
+    private func missionIcon(_ index: Int) -> String {
+        ["FigShieldPlus", "FigMissionEmblem", "FigUtensils"][index % 3]
+    }
+
+    private func activeCard(_ row: MissionRow?, icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             card {
                 HStack(spacing: PersonalSpace.s12) {
-                    Circle()
-                        .stroke(palette.border, lineWidth: 8)
-                        .frame(width: 48, height: 48)
+                    FigIcon(name: icon, size: 48)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(row?.title ?? "Unavailable").personalText(.primary, size: 16, weight: .bold)
                         Text(row?.line ?? "Unavailable").personalText(.secondary, size: 14)

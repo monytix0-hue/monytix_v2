@@ -220,10 +220,10 @@ struct MileHomeView: View {
                     eyebrow("RECENT MILES")
                     Text("What actually moved you forward").personalText(.secondary, size: 14)
                     if recent.isEmpty {
-                        eventRow(nil, nil, nil, nil)
+                        eventRow("FigShieldCheck", nil, nil, nil, nil)
                     } else {
-                        ForEach(recent, id: \.id) { event in
-                            eventRow(event.title, event.line, event.miles) { onTrace(event.id) }
+                        ForEach(Array(recent.enumerated()), id: \.element.id) { index, event in
+                            eventRow(mileIcon(index), event.title, event.line, event.miles) { onTrace(event.id) }
                         }
                     }
                     link("See every MILE", action: onOutcomes)
@@ -247,9 +247,14 @@ struct MileHomeView: View {
         }
     }
 
-    private func eventRow(_ title: String?, _ line: String?, _ miles: String?, _ action: (() -> Void)?) -> some View {
+    private func mileIcon(_ index: Int) -> String {
+        ["FigShieldCheck", "FigCreditCard", "FigUtensils"][index % 3]
+    }
+
+    private func eventRow(_ icon: String, _ title: String?, _ line: String?, _ miles: String?, _ action: (() -> Void)?) -> some View {
         Button(action: action ?? {}) {
-            HStack {
+            HStack(spacing: PersonalSpace.s12) {
+                FigIcon(name: icon, size: 28)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title ?? "Unavailable").personalText(.primary, size: 15, weight: .bold)
                     Text(line ?? "Unavailable").personalText(.secondary, size: 13)

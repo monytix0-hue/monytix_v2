@@ -1,6 +1,5 @@
 package com.monytix.app.missions
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -21,7 +20,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -35,12 +33,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.monytix.app.R
 import com.monytix.app.auth.MonytixApi
+import com.monytix.app.theme.FigIcon
 import com.monytix.app.theme.LocalPersonalTheme
 import com.monytix.app.theme.PersonalRadius
 import com.monytix.app.theme.PersonalSpace
@@ -328,9 +326,12 @@ fun MissionHome(
         Text("ACTIVE", color = eyebrow(), fontFamily = theme.fontFamily, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
         val active = list.active
         if (active.isEmpty()) {
-            ActiveCard(null) {}
+            ActiveCard(null, R.drawable.fig_shield_plus) {}
         } else {
-            active.forEach { row -> ActiveCard(row) { onActive(row.id) } }
+            active.forEachIndexed { index, row ->
+                val icon = listOf(R.drawable.fig_shield_plus, R.drawable.fig_mission_emblem, R.drawable.fig_utensils)[index % 3]
+                ActiveCard(row, icon) { onActive(row.id) }
+            }
         }
         val completed = list.completed.firstOrNull()
         Row(
@@ -338,7 +339,7 @@ fun MissionHome(
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(Icons.Outlined.Check, contentDescription = null, tint = theme.palette.textSecondary, modifier = Modifier.size(18.dp))
+            FigIcon(R.drawable.fig_cash_check, 18.dp)
             Text("  Completed Missions", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
         }
         Gold("Create a Mission", onCreate)
@@ -600,11 +601,11 @@ private fun sheetTitle(step: MissionStep, name: String?) = when (step) {
 }
 
 @Composable
-private fun ActiveCard(row: MissionRow?, onOpen: () -> Unit) {
+private fun ActiveCard(row: MissionRow?, icon: Int, onOpen: () -> Unit) {
     val theme = LocalPersonalTheme.current
     SurfaceCard(if (row == null) Modifier else Modifier.clickable(onClick = onOpen)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s12)) {
-            EmptyRing()
+            FigIcon(icon, 48.dp)
             Column(Modifier.weight(1f)) {
                 Text(row?.title ?: Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 Text(row?.line ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
@@ -708,16 +709,6 @@ private fun CircleButton(onClick: () -> Unit, content: @Composable () -> Unit) {
         contentAlignment = Alignment.Center,
         content = { content() },
     )
-}
-
-@Composable
-private fun EmptyRing() {
-    val theme = LocalPersonalTheme.current
-    Box(Modifier.size(56.dp), contentAlignment = Alignment.Center) {
-        Canvas(Modifier.size(48.dp)) {
-            drawArc(color = theme.palette.border, startAngle = -90f, sweepAngle = 360f, useCenter = false, style = Stroke(8.dp.toPx(), cap = StrokeCap.Round))
-        }
-    }
 }
 
 @Composable

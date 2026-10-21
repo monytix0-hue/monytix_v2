@@ -1,4 +1,3 @@
-import CoreText
 import SwiftUI
 
 struct PersonalTheme: Sendable {
@@ -52,18 +51,6 @@ enum PersonalSurfaceRole {
     case anchor
     case mission
     case dismiss
-}
-
-enum PersonalFontRegistration {
-    static func register() {
-        let names = ["inter_regular", "inter_semibold", "inter_bold", "inter_extrabold"]
-        for name in names {
-            let url = Bundle.main.url(forResource: name, withExtension: "ttf", subdirectory: "Fonts")
-                ?? Bundle.main.url(forResource: name, withExtension: "ttf")
-            guard let url else { continue }
-            CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
-        }
-    }
 }
 
 enum PersonalFont {

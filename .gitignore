@@ -26,3 +26,12 @@ xcuserdata/
 *.log
 .DS_Store
 Thumbs.db
+
+# Syncthing / local junk
+.stfolder/
+*.sync-conflict-*
+Acct Statement*.pdf
+celerybeat-schedule*
+backend-monytix/intelligence/celerybeat-schedule*
+website/tsconfig.tsbuildinfo
+scripts/*-e2e-result.json

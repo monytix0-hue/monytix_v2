@@ -7,6 +7,7 @@ import { registerAuthGuard, type AuthConfig } from "./auth/guard.js";
 import type { IdentityStore } from "./auth/identity.js";
 import { businessRoutes } from "./business/index.js";
 import { decisionsRoutes } from "./decisions/index.js";
+import { financeProxyPlugin } from "./plugins/financeProxy.js";
 import { mileRoutes } from "./mile/index.js";
 import { missionsRoutes } from "./missions/index.js";
 import { nudgesRoutes } from "./nudges/index.js";
@@ -44,6 +45,11 @@ export type BuildOptions = {
   gmailConnect?: GmailConnectOptions;
   platformProbe?: PlatformProbe;
   rateLimit?: { limit: number; windowMs: number };
+  /**
+   * When set, Decision OS UI/mutation routes proxy to backend-monytix (:8090)
+   * via @fastify/http-proxy instead of local stubs.
+   */
+  financeBackendUrl?: string | null;
 };
 
 export const redactedPaths = [
@@ -176,19 +182,32 @@ export async function buildApp(options: BuildOptions = {}): Promise<FastifyInsta
   await app.register(transactionsRoutes, { manual: manualTransactions, categories: categoryChoices });
   await app.register(ledgerRoutes, { ledger });
   await app.register(liveRoutes, { ledger });
-  await app.register(importRoutes, {
-    imports,
-    storage: objectStorage,
-    scanner: options.importScanner,
-    databaseUrl: options.databaseUrl,
-  });
+
+  // When FINANCE_BACKEND_URL is set, proxy imports + Decision OS to :8090 and skip local import/stub routes.
+  const financeUrl = options.financeBackendUrl?.trim() || "";
+  if (financeUrl) {
+    await app.register(financeProxyPlugin, { upstream: financeUrl });
+    await app.register(async (scoped) => {
+      scoped.get("/decisions", async () => ({ module: "decisions", status: "proxied" as const }));
+      scoped.get("/missions", async () => ({ module: "missions", status: "proxied" as const }));
+      scoped.get("/mile", async () => ({ module: "mile", status: "proxied" as const }));
+    });
+  } else {
+    await app.register(importRoutes, {
+      imports,
+      storage: objectStorage,
+      scanner: options.importScanner,
+      databaseUrl: options.databaseUrl,
+    });
+    await app.register(decisionsRoutes);
+    await app.register(missionsRoutes);
+    await app.register(mileRoutes);
+  }
+
   await app.register(sourcesRoutes);
   await app.register(statementsRoutes);
   await app.register(personalRoutes);
   await app.register(businessRoutes);
-  await app.register(decisionsRoutes);
-  await app.register(missionsRoutes);
-  await app.register(mileRoutes);
   await app.register(nudgesRoutes);
   await app.register(projectionsRoutes);
   await app.register(platformRoutes, { probe: options.platformProbe });

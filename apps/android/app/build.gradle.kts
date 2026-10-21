@@ -1,4 +1,5 @@
 import java.util.Properties
+import org.gradle.api.tasks.util.PatternFilterable
 
 plugins {
     id("com.android.application")
@@ -20,7 +21,7 @@ android {
         if (localFile.exists()) {
             localFile.inputStream().use { local.load(it) }
         }
-        val apiBase = local.getProperty("monytix.apiBaseUrl") ?: ""
+        val apiBase = local.getProperty("monytix.apiBaseUrl") ?: "https://api.monytix.ai/"
         buildConfigField("String", "API_BASE_URL", "\"${apiBase.replace("\"", "")}\"")
         buildConfigField("boolean", "FIREBASE_CONFIGURED", file("google-services.json").exists().toString())
     }
@@ -37,8 +38,10 @@ android {
     }
 
     sourceSets {
-        if (file("google-services.json").exists()) {
-            getByName("main") {
+        getByName("main") {
+            (java as PatternFilterable).exclude("**/*sync-conflict*")
+            (kotlin as PatternFilterable).exclude("**/*sync-conflict*")
+            if (file("google-services.json").exists()) {
                 java.srcDir("src/firebase/java")
                 kotlin.srcDir("src/firebase/java")
             }

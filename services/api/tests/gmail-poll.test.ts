@@ -127,6 +127,39 @@ test("a drained mailbox parses a new alert and ignores a pdf-only message", asyn
   assert.deepEqual(checkpoints, ["15"]);
 });
 
+test("a deleted gmail message is skipped and the checkpoint still advances", async () => {
+  const staged: SpotSave[] = [];
+  const checkpoints: string[] = [];
+  const fetchImpl: PollFetch = async (url) => {
+    if (url.includes("oauth.example")) {
+      return { status: 200, json: async () => ({ access_token: "access-token" }) };
+    }
+    if (url.includes("/history")) {
+      return {
+        status: 200,
+        json: async () => ({
+          history: [{
+            id: "15",
+            messagesAdded: [{ message: { id: "gone-1" } }, { message: { id: "alert-1" } }],
+          }],
+        }),
+      };
+    }
+    if (url.includes("/messages/") && url.includes("format=raw")) {
+      const id = decodeURIComponent(url.split("/messages/")[1]?.split("?")[0] ?? "");
+      if (id === "gone-1") {
+        return { status: 404, json: async () => ({ error: { code: 404 } }) };
+      }
+      return { status: 200, json: async () => ({ raw: Buffer.from(rawMessage(id), "latin1").toString("base64url") }) };
+    }
+    return { status: 500, json: async () => ({}) };
+  };
+  const synced = await pollConnection(connection("10"), ports(fetchImpl, staged, checkpoints, []));
+  assert.deepEqual(synced, { stored: 1, skipped: 0 });
+  assert.deepEqual(staged.map((row) => row.messageId), ["alert-1"]);
+  assert.deepEqual(checkpoints, ["15"]);
+});
+
 test("a dry run logs the alert and does not stage it", async () => {
   const staged: SpotSave[] = [];
   const checkpoints: string[] = [];

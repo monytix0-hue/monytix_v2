@@ -1,4 +1,5 @@
 import { buildApp, productionLogger } from "./app.js";
+import { readApiEnv } from "./config/env.js";
 import { createPgIdentity } from "./auth/identity.js";
 import { createLiveAdminVerifier, isRequestAuthConfigured } from "./auth/admin-verifier.js";
 import { createLedgerRead } from "./ledger/read.js";
@@ -10,8 +11,9 @@ import { createPgGmailStore } from "./gmail/pg-store.js";
 import { createPgGmailConnectStore } from "./gmail/connect-store.js";
 import { verifyGoogleOidc } from "./gmail/oidc.js";
 
-const port = Number(process.env.PORT ?? 8080);
-const host = "0.0.0.0";
+const apiEnv = readApiEnv();
+const port = apiEnv.PORT;
+const host = apiEnv.HOST;
 const projectId = process.env.FIREBASE_PROJECT_ID?.trim() ?? "";
 const databaseUrl = process.env.DATABASE_URL?.trim() ?? "";
 const auth = isRequestAuthConfigured(process.env)
@@ -35,6 +37,7 @@ const app = await buildApp({
   logger: productionLogger(),
   auth,
   identity,
+  financeBackendUrl: apiEnv.FINANCE_BACKEND_URL,
   manualTransactions: databaseUrl.length > 0 ? createManualTransactionStore(databaseUrl) : null,
   ledger: databaseUrl.length > 0 ? createLedgerRead(databaseUrl) : null,
   imports: databaseUrl.length > 0 ? createImportStore(databaseUrl) : null,

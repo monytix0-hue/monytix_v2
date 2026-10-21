@@ -12,10 +12,6 @@ import GoogleSignIn
 
 @main
 struct MonytixApp: App {
-    init() {
-        PersonalFontRegistration.register()
-    }
-
     var body: some Scene {
         WindowGroup {
             RootView()
@@ -23,9 +19,16 @@ struct MonytixApp: App {
                     #if canImport(GoogleSignIn)
                     GIDSignIn.sharedInstance.handle(url)
                     #endif
+                    if url.scheme == "monytix", url.host == "gmail" {
+                        NotificationCenter.default.post(name: .monytixGmailReturn, object: url)
+                    }
                 }
         }
     }
+}
+
+extension Notification.Name {
+    static let monytixGmailReturn = Notification.Name("monytixGmailReturn")
 }
 
 private struct RootView: View {

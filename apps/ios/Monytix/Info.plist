@@ -8,17 +8,18 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>com.googleusercontent.apps.636445644991-3nd322og7egin0h71876l6tkm28qqj7o</string>
+				<string>monytix</string>
 			</array>
 		</dict>
 	</array>
 	<key>MonytixAPIBaseURL</key>
-	<string></string>
+	<string>https://api.monytix.ai/</string>
 	<key>UIAppFonts</key>
 	<array>
-		<string>Fonts/inter_regular.ttf</string>
-		<string>Fonts/inter_semibold.ttf</string>
-		<string>Fonts/inter_bold.ttf</string>
-		<string>Fonts/inter_extrabold.ttf</string>
+		<string>inter_regular.ttf</string>
+		<string>inter_semibold.ttf</string>
+		<string>inter_bold.ttf</string>
+		<string>inter_extrabold.ttf</string>
 	</array>
 </dict>
 </plist>

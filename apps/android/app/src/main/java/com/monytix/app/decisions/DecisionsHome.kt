@@ -35,7 +35,9 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.monytix.app.R
 import com.monytix.app.auth.MonytixApi
+import com.monytix.app.theme.FigIcon
 import com.monytix.app.theme.LocalPersonalTheme
 import com.monytix.app.theme.PersonalRadius
 import com.monytix.app.theme.PersonalSpace
@@ -218,6 +220,7 @@ fun DecisionHome(
         }
         val featured = read.heaviest
         Card(if (featured?.id != null) Modifier.clickable { onOpen(featured.id) } else Modifier) {
+            FigIcon(R.drawable.fig_biz_shield, 32.dp)
             Text(featured?.title ?: Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
             Text(featured?.amount ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
             Text(featured?.timing ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
@@ -226,11 +229,13 @@ fun DecisionHome(
         Text("Other choices ahead", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
         if (listed.isEmpty()) {
             Card {
+                FigIcon(R.drawable.fig_biz_shield_2, 32.dp)
                 Text(Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
             }
         } else {
-            listed.forEach { row ->
+            listed.forEachIndexed { index, row ->
                 Card(Modifier.clickable { onOpen(row.id) }) {
+                    FigIcon(if (index % 2 == 0) R.drawable.fig_biz_shield_2 else R.drawable.fig_biz_shield, 32.dp)
                     Text(row.title ?: Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                     Text(row.amount ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
                     Text(row.timing ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)

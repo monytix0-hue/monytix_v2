@@ -35,7 +35,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.monytix.app.R
 import com.monytix.app.auth.MonytixApi
+import com.monytix.app.theme.FigIcon
 import com.monytix.app.theme.LocalPersonalTheme
 import com.monytix.app.theme.PersonalRadius
 import com.monytix.app.theme.PersonalSpace
@@ -275,10 +277,11 @@ fun MileHome(
             Eyebrow("RECENT MILES")
             Text("What actually moved you forward", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
             if (recent.isEmpty()) {
-                EventRow(null, null, null, null)
+                EventRow(R.drawable.fig_shield_check, null, null, null)
             } else {
-                recent.forEach { event ->
-                    EventRow(event.title, event.line, event.miles) { onTrace(event.id) }
+                recent.forEachIndexed { index, event ->
+                    val icon = listOf(R.drawable.fig_shield_check, R.drawable.fig_credit_card, R.drawable.fig_utensils)[index % 3]
+                    EventRow(icon, event.title, event.line, event.miles) { onTrace(event.id) }
                 }
             }
             Link("See every MILE", onOutcomes)
@@ -467,15 +470,16 @@ private fun FamilyRow(family: Family, amount: String?, onOpen: (() -> Unit)?) {
 }
 
 @Composable
-private fun EventRow(title: String?, line: String?, miles: String?, onOpen: (() -> Unit)? = null) {
+private fun EventRow(icon: Int, title: String?, line: String?, miles: String?, onOpen: (() -> Unit)? = null) {
     val theme = LocalPersonalTheme.current
     Row(
         Modifier
             .fillMaxWidth()
             .then(if (onOpen == null) Modifier else Modifier.clickable(onClick = onOpen)),
-        horizontalArrangement = Arrangement.SpaceBetween,
+        horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s12),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        FigIcon(icon, 28.dp)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(title ?: Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 15.sp)
             Text(line ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)

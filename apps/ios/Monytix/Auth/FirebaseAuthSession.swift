@@ -81,6 +81,9 @@ final class FirebaseAuthSession: NSObject, AuthSession {
     }
 
     func signOut() async {
+        #if canImport(GoogleSignIn)
+        GIDSignIn.sharedInstance.signOut()
+        #endif
         try? Auth.auth().signOut()
     }
 

@@ -61,6 +61,12 @@ class FirebaseAuthSession : AuthSession {
     }
 
     override suspend fun signOut() {
+        val app = auth.app.applicationContext
+        val options = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+            .requestIdToken(app.getString(R.string.default_web_client_id))
+            .requestEmail()
+            .build()
+        runCatching { GoogleSignIn.getClient(app, options).signOut().await() }
         auth.signOut()
     }
 

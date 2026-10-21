@@ -57,7 +57,12 @@ export function isRequestAuthConfigured(env: NodeJS.ProcessEnv): boolean {
   return projectId.length > 0 && (credentials.length > 0 || inline.length > 0);
 }
 
-export async function createLiveAdminVerifier(env: NodeJS.ProcessEnv = process.env): Promise<TokenVerifier> {
+export type LiveAdminAuth = {
+  verify: TokenVerifier;
+  revokeRefreshTokens: (subject: string) => Promise<void>;
+};
+
+export async function createLiveAdminVerifier(env: NodeJS.ProcessEnv = process.env): Promise<LiveAdminAuth> {
   const projectId = env.FIREBASE_PROJECT_ID?.trim() ?? "";
   const { applicationDefault, cert, getApps, initializeApp } = await import("firebase-admin/app");
   const { getAuth } = await import("firebase-admin/auth");
@@ -66,11 +71,17 @@ export async function createLiveAdminVerifier(env: NodeJS.ProcessEnv = process.e
     const credential = inline.length > 0 ? cert(JSON.parse(inline) as { projectId?: string; privateKey?: string; clientEmail?: string }) : applicationDefault();
     initializeApp({ credential, projectId });
   }
-  return createAdminTokenVerifier({
-    projectId,
-    checker: getAuth(),
-    revokedSubjects: revokedSubjectsFromEnv(env.MONYTIX_REVOKED_SUBJECTS),
-  });
+  const adminAuth = getAuth();
+  return {
+    verify: createAdminTokenVerifier({
+      projectId,
+      checker: adminAuth,
+      revokedSubjects: revokedSubjectsFromEnv(env.MONYTIX_REVOKED_SUBJECTS),
+    }),
+    revokeRefreshTokens: async (subject: string) => {
+      await adminAuth.revokeRefreshTokens(subject);
+    },
+  };
 }
 
 function errorCode(error: unknown): string {

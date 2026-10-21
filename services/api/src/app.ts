@@ -176,7 +176,7 @@ export async function buildApp(options: BuildOptions = {}): Promise<FastifyInsta
     });
   }
 
-  await app.register(authRoutes);
+  await app.register(authRoutes, { auth });
   await app.register(usersRoutes);
   await app.register(accountsRoutes);
   await app.register(transactionsRoutes, { manual: manualTransactions, categories: categoryChoices });

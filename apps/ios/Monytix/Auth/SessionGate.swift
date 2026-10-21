@@ -19,9 +19,10 @@ struct SessionGate: View {
     }
 
     private func signOut() {
-        api.cancelPending()
-        api.clearCache()
         Task {
+            await api.logout { force in await session.idToken(forceRefresh: force) }
+            api.cancelPending()
+            api.clearCache()
             await session.signOut()
             signedIn = false
         }

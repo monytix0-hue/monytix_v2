@@ -41,6 +41,14 @@ final class MonytixApi {
         return .rejected("Sign-in could not be confirmed.")
     }
 
+    /// Best-effort server logout; failures are ignored by the caller.
+    func logout(token: (Bool) async -> String?) async {
+        if baseURL.isEmpty {
+            return
+        }
+        _ = await send(method: "POST", path: "/auth/logout", body: nil, idempotencyKey: nil, token: token)
+    }
+
     func getJSON(path: String, token: (Bool) async -> String?) async -> Data? {
         if baseURL.isEmpty {
             return nil

@@ -67,6 +67,7 @@ private fun SessionGate() {
             token = session::idToken,
             onSignOut = {
                 scope.launch {
+                    runCatching { api.logout(session::idToken) }
                     api.cancelPending()
                     api.clearCache()
                     session.signOut()

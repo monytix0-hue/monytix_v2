@@ -19,7 +19,7 @@ const databaseUrl = process.env.DATABASE_URL?.trim() ?? "";
 const auth = isRequestAuthConfigured(process.env)
   ? {
       configured: true,
-      verify: await createLiveAdminVerifier(process.env),
+      ...(await createLiveAdminVerifier(process.env)),
     }
   : {
       configured: false,

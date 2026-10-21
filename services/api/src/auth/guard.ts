@@ -6,6 +6,8 @@ import type { TokenVerifier } from "./verifier.js";
 export type AuthConfig = {
   configured: boolean;
   verify: TokenVerifier;
+  /** Firebase Admin revokeRefreshTokens; optional so tests can omit it. */
+  revokeRefreshTokens?: (subject: string) => Promise<void>;
 };
 
 const ownerHeader = "x-monytix-owner-id";
@@ -40,6 +42,7 @@ export function registerAuthGuard(
       });
       const requestedOwner = headerValue(request.headers[ownerHeader]);
       const ownerId = await identity.resolveOwner(actor.actorId, requestedOwner, verified.email);
+      request.authSubject = verified.subject;
       request.actorId = actor.actorId;
       request.ownerId = ownerId;
     } catch (error) {
@@ -85,6 +88,7 @@ function sendAuthError(reply: FastifyReply, error: AuthError): FastifyReply {
 
 declare module "fastify" {
   interface FastifyRequest {
+    authSubject?: string;
     actorId?: string;
     ownerId?: string | null;
   }

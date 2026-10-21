@@ -36,6 +36,14 @@ class MonytixApi(private val baseUrl: String) {
         return if (status in 200..299) ConfirmResult.Confirmed else ConfirmResult.Rejected("Sign-in could not be confirmed.")
     }
 
+    /** Best-effort server logout; failures are ignored by the caller. */
+    suspend fun logout(token: suspend (Boolean) -> String?) {
+        if (baseUrl.isBlank()) {
+            return
+        }
+        send("POST", "/auth/logout", null, null, token)
+    }
+
     suspend fun getJson(path: String, token: suspend (Boolean) -> String?): String? {
         if (baseUrl.isBlank()) {
             return null

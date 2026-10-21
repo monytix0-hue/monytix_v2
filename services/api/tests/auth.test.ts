@@ -104,3 +104,55 @@ test("GET /auth rejects an owner the actor cannot access", async () => {
   assert.deepEqual(response.json(), { error: "owner_forbidden" });
   await app.close();
 });
+
+test("POST /auth/logout rejects a missing token", async () => {
+  const app = await anonymousApp();
+  const response = await app.inject({ method: "POST", url: "/auth/logout" });
+  assert.equal(response.statusCode, 401);
+  assert.deepEqual(response.json(), { error: "unauthorized" });
+  await app.close();
+});
+
+test("POST /auth/logout fails closed when Firebase is not configured", async () => {
+  const app = await buildApp({ logger: false });
+  const response = await app.inject({
+    method: "POST",
+    url: "/auth/logout",
+    headers: { authorization: "Bearer anything" },
+  });
+  assert.equal(response.statusCode, 503);
+  assert.deepEqual(response.json(), { error: "auth_unconfigured" });
+  await app.close();
+});
+
+test("POST /auth/logout revokes refresh tokens for the subject", async () => {
+  const revoked: string[] = [];
+  const { token, options } = await signToken({ subject: "user-logout", expiresIn: "1h" });
+  options.auth = {
+    ...options.auth!,
+    revokeRefreshTokens: async (subject) => {
+      revoked.push(subject);
+    },
+  };
+  const app = await buildApp(options);
+  const response = await app.inject({
+    method: "POST",
+    url: "/auth/logout",
+    headers: { authorization: `Bearer ${token}` },
+  });
+  assert.equal(response.statusCode, 204);
+  assert.deepEqual(revoked, ["user-logout"]);
+  await app.close();
+});
+
+test("POST /auth/logout succeeds when revoke is not wired", async () => {
+  const { token, options } = await signToken({ subject: "user-ok", expiresIn: "1h" });
+  const app = await buildApp(options);
+  const response = await app.inject({
+    method: "POST",
+    url: "/auth/logout",
+    headers: { authorization: `Bearer ${token}` },
+  });
+  assert.equal(response.statusCode, 204);
+  await app.close();
+});

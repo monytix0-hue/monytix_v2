@@ -17,7 +17,7 @@ services:
     environment:
       NODE_ENV: development
       FIREBASE_PROJECT_ID: monytix-test
-      FINANCE_BACKEND_URL: ${FINANCE_BACKEND_URL:-http://host.docker.internal:8090}
+      FINANCE_BACKEND_URL: ${FINANCE_BACKEND_URL:-http://finance-api:8090}
       OBJECT_STORAGE_ENDPOINT: http://minio:9000
       OBJECT_STORAGE_REGION: us-east-1
       OBJECT_STORAGE_BUCKET: statements
@@ -34,6 +34,23 @@ services:
     depends_on:
       minio:
         condition: service_started
+
+  finance-api:
+    ports:
+      - "8090:8090"
+    environment:
+      OBJECT_STORAGE_ENDPOINT: http://minio:9000
+      OBJECT_STORAGE_REGION: us-east-1
+      OBJECT_STORAGE_BUCKET: statements
+      OBJECT_STORAGE_ACCESS_KEY_ID: minio
+      OBJECT_STORAGE_SECRET_ACCESS_KEY: minioadmin
+    depends_on:
+      minio:
+        condition: service_started
+
+  finance-intelligence:
+    ports:
+      - "8091:8091"
 
   scanner:
     environment:

@@ -21,9 +21,12 @@ Copy `.env.example` to `.env`, then start Postgres, the API, and intelligence:
 .\scripts\dev.ps1
 ```
 
-- API health: `http://localhost:3000/platform/health`
-- Intelligence stays on the compose network and is not published to the host
-- Postgres: `localhost:5432`
+- API health: `http://localhost:8080/platform/health` (override publishes `8080`)
+- Decision OS (`finance-api`): `http://localhost:8090/health` when compose override is loaded
+- Legacy `intelligence` stays on the compose network; finance-intelligence is on `8091` locally
+- Postgres: external Supabase (`DATABASE_URL`)
+
+Dokploy: see `infrastructure/dokploy/README.md`. Set `INTERNAL_TOKEN` and keep `FINANCE_BACKEND_URL=http://finance-api:8090`.
 
 Apply schema changes with `.\scripts\migrate.ps1`. `dev.ps1` runs that migrator as part of compose. The Postgres image does not auto-run `database/migrations`.
 

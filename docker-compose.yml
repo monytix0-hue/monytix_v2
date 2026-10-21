@@ -29,7 +29,8 @@ services:
       PORT: 8080
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       INTELLIGENCE_URL: ${INTELLIGENCE_URL:-http://intelligence:8000}
-      FINANCE_BACKEND_URL: ${FINANCE_BACKEND_URL:-}
+      # Decision OS engine (backend-monytix). Empty disables the proxy.
+      FINANCE_BACKEND_URL: ${FINANCE_BACKEND_URL:-http://finance-api:8090}
       FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:?FIREBASE_PROJECT_ID is required}
       GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:?GOOGLE_APPLICATION_CREDENTIALS is required}
       GMAIL_PUBSUB_AUDIENCE: ${GMAIL_PUBSUB_AUDIENCE:-}
@@ -153,3 +154,182 @@ services:
     restart: unless-stopped
     mem_limit: 512m
     cpus: 0.5
+
+  # --- Decision OS (backend-monytix) ---
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - monytix_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.25
+
+  mongo:
+    image: mongo:7
+    volumes:
+      - monytix_mongo:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: 0.5
+
+  finance-intelligence:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/finance-intelligence.Dockerfile
+    environment:
+      PORT: 8091
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?INTERNAL_TOKEN is required}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      FINANCE_API_URL: ${FINANCE_API_URL:-http://finance-api:8090}
+      INTELLIGENCE_URL: ${INTELLIGENCE_URL_FINANCE:-http://finance-intelligence:8091}
+      AA_FIU_PRIVATE_KEY: ${AA_FIU_PRIVATE_KEY:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: 0.5
+
+  finance-celery-worker:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/finance-intelligence.Dockerfile
+    command:
+      [
+        "celery",
+        "-A",
+        "app.celery_app.celery",
+        "worker",
+        "-Q",
+        "intake,cash,holdings,obligations,reconciliation,context,decisions",
+        "-c",
+        "2",
+        "-l",
+        "info",
+      ]
+    environment:
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?INTERNAL_TOKEN is required}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      FINANCE_API_URL: ${FINANCE_API_URL:-http://finance-api:8090}
+      INTELLIGENCE_URL: ${INTELLIGENCE_URL_FINANCE:-http://finance-intelligence:8091}
+      AA_FIU_PRIVATE_KEY: ${AA_FIU_PRIVATE_KEY:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+      finance-intelligence:
+        condition: service_healthy
+      finance-api:
+        condition: service_healthy
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: 0.5
+
+  finance-celery-beat:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/finance-intelligence.Dockerfile
+    command: ["celery", "-A", "app.celery_app.celery", "beat", "-l", "info"]
+    environment:
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?INTERNAL_TOKEN is required}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      FINANCE_API_URL: ${FINANCE_API_URL:-http://finance-api:8090}
+      INTELLIGENCE_URL: ${INTELLIGENCE_URL_FINANCE:-http://finance-intelligence:8091}
+    depends_on:
+      redis:
+        condition: service_healthy
+      finance-celery-worker:
+        condition: service_started
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.25
+
+  finance-api:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/finance-api.Dockerfile
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: 8090
+      FINANCE_PORT: 8090
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?INTERNAL_TOKEN is required}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      FINANCE_DATABASE_URL: ${FINANCE_DATABASE_URL:-}
+      INTELLIGENCE_URL: ${INTELLIGENCE_URL_FINANCE:-http://finance-intelligence:8091}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      MONGO_URL: ${MONGO_URL:-mongodb://mongo:27017}
+      MONGO_DB: ${MONGO_DB:-monytix_raw}
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:?FIREBASE_PROJECT_ID is required}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+      GOOGLE_CREDENTIALS_JSON: ${GOOGLE_CREDENTIALS_JSON:-}
+      GMAIL_CLIENT_ID: ${GMAIL_CLIENT_ID:-}
+      GMAIL_CLIENT_SECRET: ${GMAIL_CLIENT_SECRET:-}
+      GMAIL_REDIRECT_URI: ${GMAIL_REDIRECT_URI:-}
+      GMAIL_TOKEN_URI: ${GMAIL_TOKEN_URI:-}
+      GMAIL_TOKEN_ENCRYPTION_KEY: ${GMAIL_TOKEN_ENCRYPTION_KEY:-}
+      GMAIL_PUBSUB_TOPIC: ${GMAIL_PUBSUB_TOPIC:-}
+      GMAIL_PUBSUB_AUDIENCE: ${GMAIL_PUBSUB_AUDIENCE:-}
+      GMAIL_PUBSUB_PUSH_SERVICE_ACCOUNT: ${GMAIL_PUBSUB_PUSH_SERVICE_ACCOUNT:-}
+      GMAIL_PUBSUB_OIDC_PUBLIC_KEY: ${GMAIL_PUBSUB_OIDC_PUBLIC_KEY:-}
+      OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT:?OBJECT_STORAGE_ENDPOINT is required}
+      OBJECT_STORAGE_REGION: ${OBJECT_STORAGE_REGION:-auto}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:?OBJECT_STORAGE_BUCKET is required}
+      OBJECT_STORAGE_ACCESS_KEY_ID: ${OBJECT_STORAGE_ACCESS_KEY_ID:?OBJECT_STORAGE_ACCESS_KEY_ID is required}
+      OBJECT_STORAGE_SECRET_ACCESS_KEY: ${OBJECT_STORAGE_SECRET_ACCESS_KEY:?OBJECT_STORAGE_SECRET_ACCESS_KEY is required}
+      CLAMAV_HOST: ${FINANCE_CLAMAV_HOST:-clamav}
+      CLAMAV_PORT: ${CLAMAV_PORT:-3310}
+      AA_GATEWAY_URL: ${AA_GATEWAY_URL:-}
+      AA_BASE_URL: ${AA_BASE_URL:-}
+      AA_CLIENT_API_KEY: ${AA_CLIENT_API_KEY:-}
+      AA_CLIENT_ID: ${AA_CLIENT_ID:-}
+      AA_CLIENT_SECRET: ${AA_CLIENT_SECRET:-}
+      AA_FIU_ID: ${AA_FIU_ID:-MONYTIX_FIU}
+      AA_WEBHOOK_SECRET: ${AA_WEBHOOK_SECRET:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    expose:
+      - "8090"
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      finance-intelligence:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8090/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 25s
+    restart: unless-stopped
+    mem_limit: 1g
+    cpus: 1
+
+volumes:
+  monytix_redis:
+  monytix_mongo:

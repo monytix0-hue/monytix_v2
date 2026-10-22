@@ -18,14 +18,9 @@ sealed class ConfirmResult {
 
 class MonytixApi(private val baseUrl: String) {
     private val client = OkHttpClient()
-    private val cache = linkedMapOf<String, String>()
 
     fun cancelPending() {
         client.dispatcher.cancelAll()
-    }
-
-    fun clearCache() {
-        cache.clear()
     }
 
     suspend fun confirmSession(token: suspend (Boolean) -> String?): ConfirmResult {
@@ -213,12 +208,8 @@ class MonytixApi(private val baseUrl: String) {
                 }
 
                 override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
-                    val cached = if (method == "GET" && response.isSuccessful) response.peekBody(64_000).string() else null
                     val code = response.code
                     response.close()
-                    if (cached != null) {
-                        cache[path] = cached
-                    }
                     if (continuation.isActive) {
                         continuation.resume(code)
                     }

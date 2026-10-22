@@ -80,6 +80,7 @@ const internalPaths = new Set([
   "/v1/internal/ingest",
   "/v1/internal/fx",
   "/v1/internal/gmail/renew",
+  "/v1/internal/gmail/checkpoint",
   "/v1/internal/forex/reconcile",
   "/v1/internal/human/pending",
   "/v1/internal/apply-human-context",
@@ -626,6 +627,15 @@ export function createApp(deps: BuildDeps): FastifyInstance {
     }));
     await deps.finance.upsertFx(body.rate_date, rates);
     return { stored: rates.length };
+  });
+
+  app.post("/v1/internal/gmail/checkpoint", async (request, reply) => {
+    const body = request.body as { owner_id?: string; history_id?: string };
+    if (!body?.owner_id || !body.history_id || !/^[0-9]+$/.test(body.history_id)) {
+      return reply.status(400).send({ error: "invalid_request" });
+    }
+    await deps.mongo.setHistoryId(body.owner_id, body.history_id);
+    return { ok: true, history_id: body.history_id };
   });
 
   app.post("/v1/internal/gmail/renew", async () => {

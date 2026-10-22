@@ -128,12 +128,14 @@ private func jsonText(_ object: [String: Any]?, _ key: String) -> String? {
 }
 
 struct DecisionHomeView: View {
-    var api: MonytixApi
-    var token: (Bool) async -> String?
+    var store: UiSessionStore
     var onOpen: (String) -> Void
     @Environment(\.colorScheme) private var colorScheme
-    @State private var read = DecisionRead()
     @State private var filter = decisionFilters[0].1
+
+    private var read: DecisionRead {
+        DecisionRead.parse(store.decisionsData)
+    }
 
     var body: some View {
         let listed = read.decisions.filter { $0.state == filter }
@@ -171,7 +173,9 @@ struct DecisionHomeView: View {
             .padding(.bottom, 128)
         }
         .task {
-            read = DecisionRead.parse(await api.getJSON(path: "/v1/ui/decisions", token: token))
+            if !store.decisionsReady {
+                await store.refreshDecisions()
+            }
         }
     }
 

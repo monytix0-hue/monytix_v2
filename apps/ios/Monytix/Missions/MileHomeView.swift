@@ -159,15 +159,20 @@ private func trace(_ data: Data?) -> MileTrace? {
 }
 
 struct MileHomeView: View {
-    var api: MonytixApi
-    var token: (Bool) async -> String?
+    var store: UiSessionStore
     var onOutcomes: () -> Void
     var onTrace: (String) -> Void
     var onReport: () -> Void
     var onLifetime: () -> Void
     @Environment(\.colorScheme) private var colorScheme
-    @State private var summary = MileSummary.empty
-    @State private var recent: [MileEvent] = []
+
+    private var summary: MileSummary {
+        MileSummary.parse(store.mileSummaryData)
+    }
+
+    private var recent: [MileEvent] {
+        events(store.mileEventsData)
+    }
 
     var body: some View {
         ScrollView {
@@ -242,8 +247,9 @@ struct MileHomeView: View {
             .padding(.bottom, 128)
         }
         .task {
-            summary = MileSummary.parse(await api.getJSON(path: "/v1/mile/summary", token: token))
-            recent = events(await api.getJSON(path: "/v1/mile/events", token: token))
+            if !store.mileReady {
+                await store.refreshMile()
+            }
         }
     }
 

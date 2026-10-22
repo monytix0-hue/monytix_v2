@@ -97,8 +97,14 @@ def normalize_domain(payload: dict) -> str:
 
 
 def gmail_history(payload: dict, sender: Sender | None = None) -> int:
-    messages = fetch_history(payload["access_token"], payload["history_id"])
-    return _store_messages(payload["owner_id"], messages, sender)
+    messages, history_id = fetch_history(payload["access_token"], payload["history_id"])
+    stored = _store_messages(payload["owner_id"], messages, sender)
+    if history_id and history_id != str(payload.get("history_id") or ""):
+        post_finance(
+            "/v1/internal/gmail/checkpoint",
+            {"owner_id": payload["owner_id"], "history_id": history_id},
+        )
+    return stored
 
 
 def gmail_backfill(payload: dict, sender: Sender | None = None) -> int:
@@ -154,26 +160,51 @@ def _post(base: str, path: str, payload: dict, timeout: int) -> dict:
         return json.loads(response.read().decode("utf8"))
 
 
-def fetch_history(access_token: str, start_history_id: str) -> list[dict[str, str]]:
-    page = _gmail_json(
-        access_token,
-        f"https://gmail.googleapis.com/gmail/v1/users/me/history?startHistoryId={start_history_id}&historyTypes=messageAdded",
-    )
+def fetch_history(access_token: str, start_history_id: str) -> tuple[list[dict[str, str]], str | None]:
     ids: list[str] = []
-    for item in page.get("history") or []:
-        for added in item.get("messagesAdded") or []:
-            message_id = (added.get("message") or {}).get("id")
-            if isinstance(message_id, str):
-                ids.append(message_id)
-    return [_message(access_token, message_id) for message_id in ids]
+    page_token: str | None = None
+    latest_history_id: str | None = None
+    while True:
+        url = (
+            "https://gmail.googleapis.com/gmail/v1/users/me/history"
+            f"?startHistoryId={urllib.request.quote(str(start_history_id))}"
+            "&historyTypes=messageAdded"
+        )
+        if page_token:
+            url = f"{url}&pageToken={urllib.request.quote(page_token)}"
+        page = _gmail_json(access_token, url)
+        if isinstance(page.get("historyId"), (str, int)):
+            latest_history_id = str(page["historyId"])
+        for item in page.get("history") or []:
+            for added in item.get("messagesAdded") or []:
+                message_id = (added.get("message") or {}).get("id")
+                if isinstance(message_id, str):
+                    ids.append(message_id)
+        page_token = page.get("nextPageToken")
+        if not page_token:
+            break
+    return [_message(access_token, message_id) for message_id in ids], latest_history_id
 
 
 def fetch_list(access_token: str, query: str) -> list[dict[str, str]]:
-    page = _gmail_json(
-        access_token,
-        f"https://gmail.googleapis.com/gmail/v1/users/me/messages?q={urllib.request.quote(query)}&maxResults=100",
-    )
-    return [_message(access_token, item["id"]) for item in page.get("messages") or [] if item.get("id")]
+    ids: list[str] = []
+    page_token: str | None = None
+    while True:
+        url = (
+            "https://gmail.googleapis.com/gmail/v1/users/me/messages"
+            f"?q={urllib.request.quote(query)}&maxResults=100"
+        )
+        if page_token:
+            url = f"{url}&pageToken={urllib.request.quote(page_token)}"
+        page = _gmail_json(access_token, url)
+        for item in page.get("messages") or []:
+            message_id = item.get("id")
+            if isinstance(message_id, str):
+                ids.append(message_id)
+        page_token = page.get("nextPageToken")
+        if not page_token:
+            break
+    return [_message(access_token, message_id) for message_id in ids]
 
 
 def reconcile_forex_fees(payload: dict | None = None, poster: Callable[[str, dict], dict] | None = None, lock: Any | None = None) -> dict:
@@ -430,10 +461,12 @@ def _store_messages(owner_id: str, messages: list[dict[str, str]], sender: Sende
 
 
 def _message(access_token: str, message_id: str) -> dict[str, str]:
+    from app.gmail_body import extract_message_text
+
     detail = _gmail_json(access_token, f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}?format=full")
     headers = (detail.get("payload") or {}).get("headers") or []
     subject = next((header.get("value", "") for header in headers if str(header.get("name", "")).lower() == "subject"), "")
-    text = detail.get("snippet") or subject
+    text = extract_message_text(detail.get("payload"), snippet=str(detail.get("snippet") or ""), subject=subject)
     return {"id": message_id, "text": text, "subject": subject}
 
 

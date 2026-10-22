@@ -28,6 +28,10 @@ def test_merchants():
     assert sanitize_merchant("UPI-SWIGGY-BANGALORE-429182") == "Swiggy"
     assert sanitize_merchant("POS 4111xxxx STARBUCKS BLR") == "Starbucks"
     assert sanitize_merchant("ACH/HDFCMF/SIP/109283") == "HDFC AMC"
+    from app.normalize.merchant import known_brand
+
+    assert known_brand("APPLESERVICES") == ("Apple Services", "ENTERTAINMENT_MEDIA", "STREAMING_SUBSCRIPTIONS")
+    assert known_brand("Apple Store") == ("Apple", "SHOPPING_RETAIL", None)
 
 
 def test_matrix_separates_domains():
@@ -49,9 +53,44 @@ def test_matrix_separates_domains():
         "sip": (
             "ACH/HDFCMF/SIP/109283 debited Rs 2000.00 on 19-Oct-2026",
             "LEDGER",
-            "HDFC AMC",
+            "HDFC Mutual Fund",
             "FINANCIAL_SERVICES",
             "SIP_AUTO_DEBIT",
+        ),
+        "netflix": (
+            "Your A/C ending 4321 debited by Rs 649.00 on 19-Oct-2026 via CARD NETFLIX.COM",
+            "LEDGER",
+            "Netflix",
+            "ENTERTAINMENT_MEDIA",
+            "STREAMING_SUBSCRIPTIONS",
+        ),
+        "blinkit": (
+            "UPI/BLINKIT debited Rs 420.00 on 19-Oct-2026",
+            "LEDGER",
+            "Blinkit",
+            "FOOD_DINING",
+            "GROCERIES_SUPERMARKET",
+        ),
+        "smfg": (
+            "ACH D- SMFG INDIA CREDIT EMI debited Rs 12500.00 on 19-Oct-2026",
+            "LEDGER",
+            "SMFG",
+            "FINANCIAL_SERVICES",
+            "LOAN_EMI",
+        ),
+        "cred": (
+            "UPI to CRED Dreamplug for card bill Rs 8000.00 debited on 19-Oct-2026",
+            "LEDGER",
+            "CRED",
+            "FINANCIAL_SERVICES",
+            "CREDIT_CARD_BILL",
+        ),
+        "apple_services": (
+            "CARD APPLESERVICES debited Rs 99.00 on 19-Oct-2026",
+            "LEDGER",
+            "Apple Services",
+            "ENTERTAINMENT_MEDIA",
+            "STREAMING_SUBSCRIPTIONS",
         ),
     }
     for text, domain, merchant, category, subcategory in cases.values():

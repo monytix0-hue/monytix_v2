@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { filenameOf } from "../src/gmail/mime.js";
+import { filenameOf, messageSubject } from "../src/gmail/mime.js";
 
 test("filenameOf extracts unquoted filename without trailing content-type", () => {
   const headers = {
@@ -15,6 +15,17 @@ test("filenameOf extracts quoted filename preserving spaces", () => {
     "content-disposition": 'attachment; filename="HDFC Statement Oct 2026.pdf"',
   };
   assert.equal(filenameOf(headers), "HDFC Statement Oct 2026.pdf");
+});
+
+test("messageSubject unfolds a folded header and decodes encoded words", () => {
+  const raw = [
+    "From: alerts@hdfcbank.com",
+    "Subject: Your =?UTF-8?Q?OTP?=",
+    "\tfor login",
+    "",
+    "482913 is your OTP.",
+  ].join("\r\n");
+  assert.equal(messageSubject(raw), "Your OTP for login");
 });
 
 test("filenameOf extracts unquoted name from content-type if disposition is missing", () => {

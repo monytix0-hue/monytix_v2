@@ -48,6 +48,28 @@ def test_small_swiggy_row_is_comfort_and_attention():
     assert codes == [("W02_COMFORT", True, 1.0), ("W08_ATTENTION", False, 0.6)]
 
 
+def test_blinkit_groceries_are_obligations_not_comfort_primary():
+    result = evaluate(amount=640, clean_merchant="Blinkit", category_id="FOOD_DINING", subcategory_id="GROCERIES_SUPERMARKET")
+    assert result["eligibility"]["state"] == "WEIGHT"
+    assert result["inference_run"]["primary_inferred_weight"] == "W04_OBLIGATIONS"
+    assert result["inference_run"]["rule_id"] == "R_OBLIGATION_GROCERIES"
+    codes = [item["weight_code"] for item in result["weight_associations"]]
+    assert codes[0] == "W04_OBLIGATIONS"
+
+
+def test_sip_and_emi_and_streaming_weights():
+    sip = evaluate(clean_merchant="HDFC Mutual Fund", category_id="FINANCIAL_SERVICES", subcategory_id="SIP_AUTO_DEBIT")
+    assert sip["inference_run"]["primary_inferred_weight"] == "W09_RESILIENCE"
+    emi = evaluate(clean_merchant="SMFG", category_id="FINANCIAL_SERVICES", subcategory_id="LOAN_EMI")
+    assert emi["inference_run"]["primary_inferred_weight"] == "W04_OBLIGATIONS"
+    bill = evaluate(clean_merchant="CRED", category_id="FINANCIAL_SERVICES", subcategory_id="CREDIT_CARD_BILL")
+    assert bill["inference_run"]["primary_inferred_weight"] == "W04_OBLIGATIONS"
+    stream = evaluate(clean_merchant="Netflix", category_id="ENTERTAINMENT_MEDIA", subcategory_id="STREAMING_SUBSCRIPTIONS")
+    assert stream["inference_run"]["primary_inferred_weight"] == "W02_COMFORT"
+    software = evaluate(clean_merchant="GitHub", category_id="TECHNOLOGY_SERVICES", subcategory_id="SOFTWARE_SUBSCRIPTIONS")
+    assert software["inference_run"]["primary_inferred_weight"] == "W07_OPPORTUNITY"
+
+
 def test_peer_transfer_is_only_relationships():
     result = evaluate(clean_merchant="Rahul Sharma", category_id="TRANSFER", subcategory_id="PEER_TO_PEER", flow="IN")
     assert result["eligibility"]["state"] == "WEIGHT"

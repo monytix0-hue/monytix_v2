@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.monytix.app.R
 import com.monytix.app.auth.MonytixApi
+import com.monytix.app.shell.UiSessionStore
 import com.monytix.app.theme.FigIcon
 import com.monytix.app.theme.LocalPersonalTheme
 import com.monytix.app.theme.PersonalRadius
@@ -290,17 +291,18 @@ private val crossLinks = listOf(
 
 @Composable
 fun MissionHome(
-    api: MonytixApi,
-    token: suspend (Boolean) -> String?,
+    store: UiSessionStore,
     onCreate: () -> Unit,
     onActive: (String) -> Unit,
     onCompleted: (String) -> Unit,
 ) {
     val theme = LocalPersonalTheme.current
-    var list by remember { mutableStateOf(MissionList.empty()) }
-    LaunchedEffect(api) {
-        val json = api.getJson("/v1/ui/missions", token)
-        list = if (json.isNullOrBlank()) MissionList.empty() else MissionList.parse(json)
+    val list = remember(store.missionsJson) {
+        val json = store.missionsJson
+        if (json.isNullOrBlank()) MissionList.empty() else MissionList.parse(json)
+    }
+    LaunchedEffect(store) {
+        if (!store.missionsReady) store.refreshMissions()
     }
     val pills = list.pills.ifEmpty { listOf(Unavailable, Unavailable) }
     Column(

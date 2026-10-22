@@ -91,6 +91,7 @@ fun AddSheets(
     step: AddStep,
     onStep: (AddStep) -> Unit,
     onClose: () -> Unit,
+    onImported: () -> Unit = {},
     onViewTransactions: () -> Unit,
 ) {
     val theme = LocalPersonalTheme.current
@@ -117,7 +118,12 @@ fun AddSheets(
         if (step != AddStep.Processing || file == null) return@LaunchedEffect
         val outcome = uploadStatement(api, token, file, statementPassword)
         status = outcome
-        if (!outcome.reached) onStep(AddStep.Offline) else if (outcome.done) onStep(AddStep.Success)
+        if (!outcome.reached) {
+            onStep(AddStep.Offline)
+        } else if (outcome.done) {
+            onImported()
+            onStep(AddStep.Success)
+        }
     }
     Box(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f)).clickable(onClick = onClose))

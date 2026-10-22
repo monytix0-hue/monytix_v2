@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -17,6 +18,7 @@ import com.monytix.app.auth.LoginScreen
 import com.monytix.app.auth.MonytixApi
 import com.monytix.app.auth.createAuthSession
 import com.monytix.app.shell.BusinessShell
+import com.monytix.app.shell.UiSessionStore
 import com.monytix.app.splash.MonytixSplash
 import com.monytix.app.theme.BusinessTheme
 import kotlinx.coroutines.launch
@@ -61,15 +63,24 @@ private fun SessionGate() {
     val api = remember { MonytixApi(BuildConfig.API_BASE_URL) }
     val scope = rememberCoroutineScope()
     var signedIn by remember { mutableStateOf(session.currentEmail() != null) }
+    val store = remember(api) { UiSessionStore(api, session::idToken) }
+    LaunchedEffect(signedIn, store) {
+        if (signedIn) {
+            store.prefetch()
+        } else {
+            store.clear()
+        }
+    }
     if (signedIn) {
         BusinessShell(
             api = api,
             token = session::idToken,
+            store = store,
             onSignOut = {
                 scope.launch {
                     runCatching { api.logout(session::idToken) }
                     api.cancelPending()
-                    api.clearCache()
+                    store.clear()
                     session.signOut()
                     signedIn = false
                 }

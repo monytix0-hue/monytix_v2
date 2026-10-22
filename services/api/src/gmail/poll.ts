@@ -1,6 +1,6 @@
 import { parseTransactionFromEmail, spotIdempotencyKey, type SpotAlert } from "./alertParser.js";
 import { redactGmailLog } from "./log.js";
-import { extractMimeMessage, messageDate, type ExtractedText } from "./mime.js";
+import { extractMimeMessage, messageDate, messageFrom, messageSubject, type ExtractedText } from "./mime.js";
 import { readDueDate } from "./reminders.js";
 
 const gmailApi = "https://gmail.googleapis.com/gmail/v1/users/me";
@@ -164,9 +164,19 @@ async function readMessage(
   if (!allowImport) {
     return emptyPoll;
   }
-  const alert = parseTransactionFromEmail(body, { postedAt: messageDate(raw) });
+  const alert = parseTransactionFromEmail(body, {
+    postedAt: messageDate(raw),
+    subject: messageSubject(raw),
+  });
   if (!alert) {
-    return emptyPoll;
+    const entry = redactGmailLog({
+      event: "gmail_unparsed_alert",
+      messageId,
+      from: messageFrom(raw),
+      excerpt: body.slice(0, 240),
+    });
+    (ports.debug ?? logDryRun)(entry as Record<string, unknown>);
+    return { stored: 0, skipped: 1 };
   }
   if (ports.dryRun) {
     const entry = redactGmailLog({
@@ -183,7 +193,7 @@ async function readMessage(
   }
   const outcome = await ports.saveSpotTransaction({
     messageId,
-    idempotencyKey: spotIdempotencyKey(connection.ownerId, alert),
+    idempotencyKey: spotIdempotencyKey(connection.ownerId, alert, messageId),
     flow: alert.flow,
     amount: alert.amount,
     accountLast4: alert.accountLast4,
@@ -233,40 +243,47 @@ async function listHistory(
   startHistoryId: string,
   fetchImpl: PollFetch,
 ): Promise<{ expired: boolean; records: { id: string; messageIds: string[] }[] }> {
-  const url = `${gmailApi}/history?startHistoryId=${encodeURIComponent(startHistoryId)}&historyTypes=messageAdded`;
-  const response = await fetchImpl(url, { headers: { authorization: `Bearer ${accessToken}` } });
-  if (response.status === 404) {
-    return { expired: true, records: [] };
-  }
-  const payload = await response.json();
-  if (response.status !== 200 || !payload || typeof payload !== "object") {
-    throw workerError("gmail history list failed", `http_${response.status}`);
-  }
-  const history = (payload as { history?: unknown }).history;
-  if (!Array.isArray(history)) {
-    return { expired: false, records: [] };
-  }
-  return {
-    expired: false,
-    records: history.flatMap((row) => {
-      if (!row || typeof row !== "object") {
-        return [];
+  const records: { id: string; messageIds: string[] }[] = [];
+  let pageToken: string | undefined;
+  do {
+    const url = new URL(`${gmailApi}/history`);
+    url.searchParams.set("startHistoryId", startHistoryId);
+    url.searchParams.set("historyTypes", "messageAdded");
+    if (pageToken) {
+      url.searchParams.set("pageToken", pageToken);
+    }
+    const response = await fetchImpl(url.toString(), { headers: { authorization: `Bearer ${accessToken}` } });
+    if (response.status === 404) {
+      return { expired: true, records: [] };
+    }
+    const payload = await response.json();
+    if (response.status !== 200 || !payload || typeof payload !== "object") {
+      throw workerError("gmail history list failed", `http_${response.status}`);
+    }
+    const history = (payload as { history?: unknown }).history;
+    if (Array.isArray(history)) {
+      for (const row of history) {
+        if (!row || typeof row !== "object") {
+          continue;
+        }
+        const id = textField(row, "id");
+        if (!id) {
+          continue;
+        }
+        const added = (row as { messagesAdded?: unknown }).messagesAdded;
+        const messageIds = Array.isArray(added)
+          ? added.flatMap((item) => {
+            const message = item && typeof item === "object" ? (item as { message?: unknown }).message : null;
+            const messageId = message && typeof message === "object" ? textField(message, "id") : null;
+            return messageId ? [messageId] : [];
+          })
+          : [];
+        records.push({ id, messageIds });
       }
-      const id = textField(row, "id");
-      if (!id) {
-        return [];
-      }
-      const added = (row as { messagesAdded?: unknown }).messagesAdded;
-      const messageIds = Array.isArray(added)
-        ? added.flatMap((item) => {
-          const message = item && typeof item === "object" ? (item as { message?: unknown }).message : null;
-          const messageId = message && typeof message === "object" ? textField(message, "id") : null;
-          return messageId ? [messageId] : [];
-        })
-        : [];
-      return [{ id, messageIds }];
-    }),
-  };
+    }
+    pageToken = textField(payload, "nextPageToken") ?? undefined;
+  } while (pageToken);
+  return { expired: false, records };
 }
 
 export async function listAllMatchingMessages(fetchImpl: PollFetch, accessToken: string, query: string): Promise<string[]> {

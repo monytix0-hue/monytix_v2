@@ -29,8 +29,10 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -81,10 +83,12 @@ private enum class Glyph { Pulse, Decisions, Missions }
 fun BusinessShell(
     api: MonytixApi,
     token: suspend (Boolean) -> String?,
+    store: UiSessionStore,
     onSignOut: () -> Unit,
 ) {
     PersonalTheme {
         val theme = LocalPersonalTheme.current
+        val scope = rememberCoroutineScope()
         var destination by rememberSaveable { mutableStateOf(Destination.Live) }
         var page by rememberSaveable { mutableStateOf(LivePage.Home) }
         var missionPage by rememberSaveable { mutableStateOf(MissionPage.Home) }
@@ -123,8 +127,7 @@ fun BusinessShell(
                 Column(Modifier.fillMaxSize().statusBarsPadding()) {
                     LiveDetail(
                         page = page,
-                        api = api,
-                        token = token,
+                        store = store,
                         onBack = { page = LivePage.Home },
                         onAskMoly = { page = LivePage.Moly },
                     )
@@ -158,8 +161,7 @@ fun BusinessShell(
                     ) {
                         when (destination) {
                             Destination.Live -> LiveHome(
-                                api,
-                                token,
+                                store = store,
                                 onOpen = { page = it },
                                 onViewMissions = {
                                     destination = Destination.Missions
@@ -175,13 +177,12 @@ fun BusinessShell(
                                     resetMile()
                                 },
                             )
-                            Destination.Decisions -> DecisionHome(api, token) {
+                            Destination.Decisions -> DecisionHome(store) {
                                 decisionId = it
                                 decisionPage = DecisionPage.Weigh
                             }
                             Destination.Missions -> MissionHome(
-                                api,
-                                token,
+                                store = store,
                                 onCreate = { missionPage = MissionPage.Create },
                                 onActive = {
                                     missionId = it
@@ -193,8 +194,7 @@ fun BusinessShell(
                                 },
                             )
                             Destination.Mile -> MileHome(
-                                api,
-                                token,
+                                store = store,
                                 onOutcomes = { mileStack = listOf(MileStep.Outcomes) },
                                 onTrace = {
                                     mileEventId = it
@@ -291,6 +291,7 @@ fun BusinessShell(
                     step = step,
                     onStep = { addStep = it },
                     onClose = { addStep = null },
+                    onImported = { scope.launch { store.invalidateAfterImport() } },
                     onViewTransactions = {
                         destination = Destination.Live
                         page = LivePage.Transactions

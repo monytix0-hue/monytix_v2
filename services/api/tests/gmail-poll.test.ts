@@ -122,9 +122,49 @@ test("a drained mailbox parses a new alert and ignores a pdf-only message", asyn
     return { status: 500, json: async () => ({}) };
   };
   const synced = await pollConnection(connection("10"), ports(fetchImpl, staged, checkpoints, []));
-  assert.deepEqual(synced, { stored: 1, skipped: 0 });
+  assert.deepEqual(synced, { stored: 1, skipped: 1 });
   assert.deepEqual(staged.map((row) => row.messageId), ["alert-1"]);
   assert.deepEqual(checkpoints, ["15"]);
+});
+
+test("history list exhausts nextPageToken before staging alerts", async () => {
+  const staged: SpotSave[] = [];
+  const checkpoints: string[] = [];
+  const historyUrls: string[] = [];
+  const fetchImpl: PollFetch = async (url) => {
+    if (url.includes("oauth.example")) {
+      return { status: 200, json: async () => ({ access_token: "access-token" }) };
+    }
+    if (url.includes("/history")) {
+      historyUrls.push(url);
+      if (!url.includes("pageToken=")) {
+        return {
+          status: 200,
+          json: async () => ({
+            history: [{ id: "11", messagesAdded: [{ message: { id: "alert-1" } }] }],
+            nextPageToken: "page-2",
+          }),
+        };
+      }
+      return {
+        status: 200,
+        json: async () => ({
+          history: [{ id: "12", messagesAdded: [{ message: { id: "alert-2" } }] }],
+        }),
+      };
+    }
+    if (url.includes("/messages/") && url.includes("format=raw")) {
+      const id = decodeURIComponent(url.split("/messages/")[1]?.split("?")[0] ?? "");
+      return { status: 200, json: async () => ({ raw: Buffer.from(rawMessage(id === "alert-2" ? "alert-1" : id), "latin1").toString("base64url") }) };
+    }
+    return { status: 500, json: async () => ({}) };
+  };
+  const synced = await pollConnection(connection("10"), ports(fetchImpl, staged, checkpoints, []));
+  assert.equal(historyUrls.length, 2);
+  assert.equal(historyUrls[1]?.includes("pageToken=page-2"), true);
+  assert.deepEqual(synced, { stored: 2, skipped: 0 });
+  assert.deepEqual(staged.map((row) => row.messageId), ["alert-1", "alert-2"]);
+  assert.deepEqual(checkpoints, ["11", "12"]);
 });
 
 test("a deleted gmail message is skipped and the checkpoint still advances", async () => {

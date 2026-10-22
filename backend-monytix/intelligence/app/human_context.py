@@ -51,12 +51,25 @@ def evaluate_f3_weights(txn: TransactionEvaluationInput) -> tuple[dict[str, Any]
     secondary: str | None = None
     confidence = 0.60
     rule_id = "R_DEFAULT_COMFORT"
-    if subcategory in ("FOOD_DELIVERY", "COFFEE_AND_CAFES") or category == "FOOD_DINING":
+    # Subcategory-specific rules before broad category fallbacks (groceries ≠ comfort takeout).
+    if subcategory == "GROCERIES_SUPERMARKET":
+        primary, secondary, confidence, rule_id = "W04_OBLIGATIONS", "W02_COMFORT", 0.94, "R_OBLIGATION_GROCERIES"
+    elif subcategory in ("FOOD_DELIVERY", "COFFEE_AND_CAFES"):
         primary, secondary, confidence, rule_id = "W02_COMFORT", "W08_ATTENTION", 0.95, "R_COMFORT_DINING"
+    elif category == "FOOD_DINING":
+        primary, secondary, confidence, rule_id = "W02_COMFORT", "W08_ATTENTION", 0.90, "R_COMFORT_DINING"
     elif subcategory == "TRANSIT_CABS":
         primary, secondary, confidence, rule_id = "W01_TIME", "W02_COMFORT", 0.92, "R_TIME_TRANSIT"
+    elif subcategory == "TRANSIT_FUEL" or category == "MOBILITY_TRANSPORT":
+        primary, secondary, confidence, rule_id = "W04_OBLIGATIONS", None, 0.90, "R_OBLIGATION_MOBILITY"
     elif subcategory == "SIP_AUTO_DEBIT":
         primary, secondary, confidence, rule_id = "W09_RESILIENCE", "W07_OPPORTUNITY", 0.98, "R_RESILIENCE_INVESTMENT"
+    elif subcategory in ("LOAN_EMI", "CREDIT_CARD_BILL"):
+        primary, secondary, confidence, rule_id = "W04_OBLIGATIONS", None, 0.96, "R_OBLIGATION_DEBT"
+    elif subcategory == "STREAMING_SUBSCRIPTIONS":
+        primary, secondary, confidence, rule_id = "W02_COMFORT", None, 0.92, "R_COMFORT_STREAMING"
+    elif subcategory == "SOFTWARE_SUBSCRIPTIONS":
+        primary, secondary, confidence, rule_id = "W07_OPPORTUNITY", None, 0.90, "R_OPPORTUNITY_SOFTWARE"
     elif category == "TRANSFER" and subcategory == "PEER_TO_PEER":
         primary, secondary, confidence, rule_id = "W06_RELATIONSHIPS", None, 0.80, "R_RELATIONSHIP_P2P"
     inference = {

@@ -69,7 +69,7 @@ DECLARE
     i integer;
 BEGIN
     ts_ms := floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint;
-    rnd := gen_random_bytes(10);
+    rnd := public.gen_random_bytes(10);
 
     b := set_byte(b, 0, ((ts_ms >> 40) & 255)::integer);
     b := set_byte(b, 1, ((ts_ms >> 32) & 255)::integer);

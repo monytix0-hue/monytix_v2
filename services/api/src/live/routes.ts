@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import type { LedgerRead } from "../ledger/read.js";
+import { displayTransactionTitle, formatDisplayAmount } from "./displayTitle.js";
 
 export type LiveRouteOptions = {
   ledger?: LedgerRead | null;
@@ -56,11 +57,11 @@ async function recorded(ledger: LedgerRead, ownerId: string, limit: number) {
     },
     transactions_preview: page.items.map((item) => ({
       id: item.logicalTransactionId,
-      amount: item.amount,
+      amount: formatDisplayAmount(item.amount),
       currency: item.currency,
       direction: item.direction,
       transactionDate: item.transactionDate,
-      description: item.description,
+      description: displayTransactionTitle(item.description),
     })),
   };
 }

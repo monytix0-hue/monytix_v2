@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.monytix.app.R
 import com.monytix.app.auth.MonytixApi
+import com.monytix.app.shell.UiSessionStore
 import com.monytix.app.theme.FigIcon
 import com.monytix.app.theme.LocalPersonalTheme
 import com.monytix.app.theme.PersonalRadius
@@ -209,18 +210,16 @@ private fun MileSummary.outcome(name: String): MileOutcome? =
 
 @Composable
 fun MileHome(
-    api: MonytixApi,
-    token: suspend (Boolean) -> String?,
+    store: UiSessionStore,
     onOutcomes: () -> Unit,
     onTrace: (String) -> Unit,
     onReport: () -> Unit,
     onLifetime: () -> Unit,
 ) {
-    var summary by remember { mutableStateOf(MileSummary.empty()) }
-    var recent by remember { mutableStateOf(emptyList<MileEvent>()) }
-    LaunchedEffect(api) {
-        summary = MileSummary.parse(api.getJson("/v1/mile/summary", token))
-        recent = events(api.getJson("/v1/mile/events", token))
+    val summary = remember(store.mileSummaryJson) { MileSummary.parse(store.mileSummaryJson) }
+    val recent = remember(store.mileEventsJson) { events(store.mileEventsJson) }
+    LaunchedEffect(store) {
+        if (!store.mileReady) store.refreshMile()
     }
     val theme = LocalPersonalTheme.current
     Column(

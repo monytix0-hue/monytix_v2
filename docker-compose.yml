@@ -227,12 +227,25 @@ services:
     build:
       context: .
       dockerfile: infrastructure/docker/finance-intelligence.Dockerfile
-    command: ["celery", "-A", "app.celery_app.celery", "beat", "-l", "info"]
+    command:
+      [
+        "celery",
+        "-A",
+        "app.celery_app.celery",
+        "beat",
+        "-l",
+        "info",
+        "--schedule",
+        "/var/run/celery/celerybeat-schedule",
+      ]
     environment:
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:?INTERNAL_TOKEN is required}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       FINANCE_API_URL: ${FINANCE_API_URL:-http://finance-api:8090}
       INTELLIGENCE_URL: ${INTELLIGENCE_URL_FINANCE:-http://finance-intelligence:8091}
+    volumes:
+      # Persist beat schedule so container restarts do not re-fire overdue ticks.
+      - monytix_celerybeat:/var/run/celery
     depends_on:
       redis:
         condition: service_healthy
@@ -312,3 +325,4 @@ services:
 volumes:
   monytix_redis:
   monytix_mongo:
+  monytix_celerybeat:

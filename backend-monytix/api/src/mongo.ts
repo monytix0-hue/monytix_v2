@@ -22,6 +22,7 @@ export type MongoStore = {
   getSession(sessionId: string): Promise<{ session_id: string; consent_id: string; owner_id: string; our_nonce: string; status: string } | null>;
   saveGmail(ownerId: string, sealed: string, email: string): Promise<void>;
   saveWatch(ownerId: string, historyId: string, expiration: string): Promise<void>;
+  setHistoryId(ownerId: string, historyId: string): Promise<void>;
   findGmailByEmail(email: string): Promise<GmailMailbox | null>;
   listGmail(): Promise<GmailMailbox[]>;
   claimPubSub(messageId: string): Promise<boolean>;
@@ -118,6 +119,12 @@ export class MemoryMongo implements MongoStore {
     if (!existing) return;
     existing.history_id = historyId;
     existing.watch_expiration = expiration;
+  }
+
+  async setHistoryId(ownerId: string, historyId: string): Promise<void> {
+    const existing = this.gmail.get(ownerId);
+    if (!existing) return;
+    existing.history_id = historyId;
   }
 
   async findGmailByEmail(email: string): Promise<GmailMailbox | null> {

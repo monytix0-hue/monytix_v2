@@ -172,13 +172,16 @@ private struct MissionRecord {
 }
 
 struct MissionHomeView: View {
-    var api: MonytixApi
-    var token: (Bool) async -> String?
+    var store: UiSessionStore
     var onCreate: () -> Void
     var onActive: (String) -> Void
     var onCompleted: (String) -> Void
     @Environment(\.colorScheme) private var colorScheme
-    @State private var list = MissionList()
+
+    private var list: MissionList {
+        guard let data = store.missionsData else { return MissionList() }
+        return MissionList.parse(data)
+    }
 
     var body: some View {
         let pills = list.pills.isEmpty ? ["Unavailable", "Unavailable"] : list.pills
@@ -226,11 +229,9 @@ struct MissionHomeView: View {
             .padding(.bottom, 128)
         }
         .task {
-            guard let data = await api.getJSON(path: "/v1/ui/missions", token: token) else {
-                list = MissionList()
-                return
+            if !store.missionsReady {
+                await store.refreshMissions()
             }
-            list = MissionList.parse(data)
         }
     }
 

@@ -49,6 +49,7 @@ struct AddSheetsView: View {
     let step: AddStep
     let onStep: (AddStep) -> Void
     let onClose: () -> Void
+    var onImported: () -> Void = {}
     let onViewTransactions: () -> Void
 
     @Environment(\.colorScheme) private var colorScheme
@@ -102,6 +103,7 @@ struct AddSheetsView: View {
             if !outcome.reached {
                 onStep(.offline)
             } else if outcome.done {
+                onImported()
                 onStep(.success)
             }
         }

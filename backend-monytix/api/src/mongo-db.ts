@@ -83,6 +83,13 @@ export class MongoDbStore implements MongoStore {
     );
   }
 
+  async setHistoryId(ownerId: string, historyId: string): Promise<void> {
+    await this.db.collection("gmail_credentials").updateOne(
+      { owner_id: ownerId },
+      { $set: { history_id: historyId } },
+    );
+  }
+
   async findGmailByEmail(email: string) {
     const row = await this.db.collection("gmail_credentials").findOne({ email });
     return row ? asMailbox(row) : null;

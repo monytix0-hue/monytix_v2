@@ -88,14 +88,17 @@ struct LiveSnapshot: Equatable {
 }
 
 struct LiveHomeView: View {
-    var api: MonytixApi
+    var store: UiSessionStore
     var onOpen: (LivePage) -> Void
     var onViewMissions: () -> Void
     var onViewDecisions: () -> Void
     var onViewMile: () -> Void
-    var token: (Bool) async -> String?
     @Environment(\.colorScheme) private var colorScheme
-    @State private var snapshot = LiveSnapshot.unavailable
+
+    private var snapshot: LiveSnapshot {
+        guard let data = store.liveData else { return .unavailable }
+        return LiveSnapshot.parse(data)
+    }
 
     var body: some View {
         ScrollView {
@@ -115,11 +118,9 @@ struct LiveHomeView: View {
         .personalCanvas()
         .personalTheme()
         .task {
-            guard let data = await api.getJSON(path: "/v1/ui/live", token: token) else {
-                snapshot = .unavailable
-                return
+            if !store.liveReady {
+                await store.refreshLive()
             }
-            snapshot = LiveSnapshot.parse(data)
         }
     }
 

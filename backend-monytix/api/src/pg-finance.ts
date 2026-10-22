@@ -592,6 +592,8 @@ export class PgFinance implements FinanceWriter {
   async pendingOutcomeMatches(ownerId: string | null): Promise<{ matches: OutcomeMatch[] }> {
     const client = await this.pool.connect();
     try {
+      // is_local set_config only survives inside an open transaction; without BEGIN it is discarded.
+      await client.query("BEGIN");
       let owners: string[] = [];
       if (ownerId) {
         owners = [ownerId];
@@ -672,7 +674,11 @@ export class PgFinance implements FinanceWriter {
         }
         if (matches.length >= 20) break;
       }
+      await client.query("COMMIT");
       return { matches };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
     } finally {
       client.release();
     }

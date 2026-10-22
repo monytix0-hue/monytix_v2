@@ -39,6 +39,8 @@ def _resolve(cleaned: str, flow: str) -> dict[str, str | None]:
         branded = known_brand(username)
         if branded:
             return _hit(*branded)
+        if _terminal_vpa_local(username):
+            return _rail_fallback(is_p2p, is_p2m, flow)
         merchant = sanitize_merchant(username)
         category, subcategory = resolve_taxonomy(merchant, cleaned)
         if category != "OTHER_MERCHANT":
@@ -72,10 +74,13 @@ def _resolve(cleaned: str, flow: str) -> dict[str, str | None]:
 def _mutual_fund(raw: str) -> dict[str, str | None] | None:
     upper = raw.upper()
     compact = re.sub(r"[^A-Z0-9]", "", upper)
-    if "SIP" not in compact:
-        return None
-    if "HDFCMF" in compact:
-        return _hit("HDFC AMC", "FINANCIAL_SERVICES", "SIP_AUTO_DEBIT")
+    if "HDFCMF" in compact and ("SIP" in compact or "AMC" in compact):
+        return _hit("HDFC Mutual Fund", "FINANCIAL_SERVICES", "SIP_AUTO_DEBIT")
+    if "SIP" in compact and any(marker in compact for marker in ("MUTUALFUND", "AMC", "NMF", "CAMS", "KFINTECH")):
+        branded = known_brand(raw)
+        if branded and branded[1] == "FINANCIAL_SERVICES":
+            return _hit(*branded)
+        return _hit(sanitize_merchant(raw), "FINANCIAL_SERVICES", "SIP_AUTO_DEBIT")
     if "HDFC" in upper and "MUTUAL FUND" in upper:
         return _hit("HDFC Mutual Fund", "FINANCIAL_SERVICES", "SIP_AUTO_DEBIT")
     return None
@@ -84,6 +89,13 @@ def _mutual_fund(raw: str) -> dict[str, str | None] | None:
 def _person_name(username: str) -> str:
     parts = [part.capitalize() for part in re.split(r"[._\-]+", username) if part and not part.isdigit()]
     return " ".join(parts) or TRANSFER_TYPE_RULES["P2P"]["default_name"]
+
+
+def _terminal_vpa_local(username: str) -> bool:
+    token = (username or "").strip()
+    if not token or len(token) <= 4:
+        return True
+    return bool(re.fullmatch(r"[0-9a-fA-F]+", token) or re.fullmatch(r"\d+", token))
 
 
 def _meaningless(candidate: str) -> bool:

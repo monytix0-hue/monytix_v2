@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.monytix.app.R
 import com.monytix.app.auth.MonytixApi
+import com.monytix.app.shell.UiSessionStore
 import com.monytix.app.theme.FigIcon
 import com.monytix.app.theme.LocalPersonalTheme
 import com.monytix.app.theme.PersonalRadius
@@ -178,16 +179,17 @@ private fun <T> lines(rows: org.json.JSONArray?, map: (JSONObject) -> T): List<T
 
 @Composable
 fun DecisionHome(
-    api: MonytixApi,
-    token: suspend (Boolean) -> String?,
+    store: UiSessionStore,
     onOpen: (String) -> Unit,
 ) {
     val theme = LocalPersonalTheme.current
-    var read by remember { mutableStateOf(DecisionRead.empty()) }
+    val read = remember(store.decisionsJson) {
+        val json = store.decisionsJson
+        if (json.isNullOrBlank()) DecisionRead.empty() else DecisionRead.parse(json)
+    }
     var filter by remember { mutableStateOf(filters.first().second) }
-    LaunchedEffect(api) {
-        val json = api.getJson("/v1/ui/decisions", token)
-        read = if (json.isNullOrBlank()) DecisionRead.empty() else DecisionRead.parse(json)
+    LaunchedEffect(store) {
+        if (!store.decisionsReady) store.refreshDecisions()
     }
     val listed = read.decisions.filter { it.state == filter }
     Column(

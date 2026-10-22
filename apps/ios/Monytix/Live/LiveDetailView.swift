@@ -26,13 +26,16 @@ private let liveFilters = ["All", "Spending", "Income", "Transfers"]
 
 struct LiveDetailView: View {
     var page: LivePage
-    var api: MonytixApi
-    var token: (Bool) async -> String?
+    var store: UiSessionStore
     var onBack: () -> Void
     var onAskMoly: () -> Void
     @Environment(\.colorScheme) private var colorScheme
-    @State private var snapshot = LiveSnapshot.unavailable
     @State private var filter = liveFilters[0]
+
+    private var snapshot: LiveSnapshot {
+        guard let data = store.liveData else { return .unavailable }
+        return LiveSnapshot.parse(data)
+    }
 
     var body: some View {
         ScrollView {
@@ -57,11 +60,9 @@ struct LiveDetailView: View {
         }
         .personalCanvas()
         .task {
-            guard let data = await api.getJSON(path: "/v1/ui/live", token: token) else {
-                snapshot = .unavailable
-                return
+            if !store.liveReady {
+                await store.refreshLive()
             }
-            snapshot = LiveSnapshot.parse(data)
         }
     }
 

@@ -42,8 +42,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.monytix.app.auth.MonytixApi
 import com.monytix.app.R
+import com.monytix.app.shell.UiSessionStore
 import com.monytix.app.theme.FigIcon
 import com.monytix.app.theme.LocalPersonalTheme
 import com.monytix.app.theme.PersonalRadius
@@ -55,17 +55,18 @@ private const val Unavailable = "Unavailable"
 
 @Composable
 fun LiveHome(
-    api: MonytixApi,
-    token: suspend (Boolean) -> String?,
+    store: UiSessionStore,
     onOpen: (LivePage) -> Unit,
     onViewMissions: () -> Unit,
     onViewDecisions: () -> Unit,
     onViewMile: () -> Unit,
 ) {
-    var snapshot by remember { mutableStateOf(LiveSnapshot.unavailable()) }
-    LaunchedEffect(api) {
-        val json = api.getJson("/v1/ui/live", token)
-        snapshot = if (json.isNullOrBlank()) LiveSnapshot.unavailable() else LiveSnapshot.parse(json)
+    val snapshot = remember(store.liveJson) {
+        val json = store.liveJson
+        if (json.isNullOrBlank()) LiveSnapshot.unavailable() else LiveSnapshot.parse(json)
+    }
+    LaunchedEffect(store) {
+        if (!store.liveReady) store.refreshLive()
     }
     PersonalTheme {
         val theme = LocalPersonalTheme.current
@@ -120,16 +121,15 @@ private fun Welcome(snapshot: LiveSnapshot, onOpen: (LivePage) -> Unit) {
             FigIcon(R.drawable.fig_chevron, 20.dp)
         }
         snapshot.previews.take(8).forEach { row ->
-            val money = if (!row.amount.isNullOrBlank() && !row.currency.isNullOrBlank()) {
-                "${row.currency} ${row.amount}"
-            } else {
-                Unavailable
-            }
+            val money = formatMoney(row.currency, row.amount)
             Row(
                 horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s12),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                FigIcon(if (row.direction == "IN") R.drawable.fig_cash_arrow else R.drawable.fig_utensils, 24.dp)
+                FigIcon(
+                    if (row.direction == "IN") R.drawable.fig_cash_arrow else R.drawable.fig_tx_user,
+                    24.dp,
+                )
                 Column {
                     Text(
                         row.description ?: Unavailable,
@@ -500,4 +500,17 @@ private fun transactionFact(snapshot: LiveSnapshot): String {
         return Unavailable
     }
     return if (snapshot.hasRecordedTransactions) "Recorded" else "No recorded transactions"
+}
+
+private fun formatMoney(currency: String?, amount: String?): String {
+    if (currency.isNullOrBlank() || amount.isNullOrBlank()) {
+        return Unavailable
+    }
+    val value = amount.replace(",", "").toDoubleOrNull()
+    val formatted = if (value != null) {
+        String.format(java.util.Locale.US, "%,.2f", value)
+    } else {
+        amount
+    }
+    return "$currency $formatted"
 }

@@ -85,6 +85,8 @@ for file in $(find /database/migrations -maxdepth 1 -type f -name '*.sql' | sort
     0039_decisions_candidates.sql) code="DECISIONS-CANDIDATES" ;;
     0040_action_missions.sql) code="ACTION-MISSIONS" ;;
     0041_outcomes_mile.sql) code="OUTCOMES-MILE" ;;
+    0042_gmail_spot_promote_clean_title.sql) code="GMAIL-SPOT-CLEAN-TITLE" ;;
+    0043_financial_subcategories.sql) code="FINANCIAL-SUBCATEGORIES" ;;
     *) code="" ;;
   esac
 

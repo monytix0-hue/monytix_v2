@@ -186,6 +186,40 @@ test("email text stays a candidate and statement attachments use the import shap
   assert.equal(workerSource.includes("logical_transaction"), false);
 });
 
+test("nested multipart alternative html-only tables still extract amount text", () => {
+  const html = [
+    "<html><body><table><tr><td>Amount</td><td>INR</td><td>5900.00</td></tr>",
+    "<tr><td>Status</td><td>debited</td></tr>",
+    "<tr><td>Merchant</td><td>American Express</td></tr></table></body></html>",
+  ].join("");
+  const raw = [
+    "From: alerts@example.com",
+    "Content-Type: multipart/mixed; boundary=outer",
+    "",
+    "--outer",
+    "Content-Type: multipart/alternative; boundary=inner",
+    "",
+    "--inner",
+    "Content-Type: text/html; charset=UTF-8",
+    "",
+    html,
+    "--inner--",
+    "--outer--",
+    "",
+  ].join("\r\n");
+  const extracted = extractMimeMessage({
+    ownerId: "owner-a",
+    gmailConnectionId: "connection-a",
+    gmailMessageId: "nested-1",
+    raw,
+  });
+  assert.equal(extracted.texts.some((part) => part.mimeType === "text/html"), true);
+  const joined = extracted.texts.map((part) => part.text).join(" ");
+  assert.match(joined, /INR/);
+  assert.match(joined, /5900/);
+  assert.match(joined, /debited/i);
+});
+
 function preparedStore(): MemoryGmailStore & { connectionForTest(): ReturnType<MemoryGmailStore["insertConnection"]> } {
   const store = new MemoryGmailStore();
   const connection = store.insertConnection({

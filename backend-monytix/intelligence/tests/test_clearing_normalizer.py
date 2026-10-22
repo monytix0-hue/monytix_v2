@@ -73,3 +73,18 @@ def test_case_insensitivity_clearing_patterns():
     assert result["clean_merchant"] == "Merchant Payment"
     assert result["category_id"] == "PAYMENTS"
     assert result["subcategory_id"] == "MERCHANT_SETTLEMENT"
+
+
+def test_terminal_vpa_local_falls_back_to_merchant_payment():
+    result = extract_counterparty(raw_text="UPI/DR/429182736451/0807@pty/Payment", flow="OUT")
+    assert result["clean_merchant"] == "General Spend"
+    assert result["category_id"] == "OTHER_PAYMENT"
+    assert "0807" not in (result["clean_merchant"] or "")
+
+
+def test_banking_corp_suffix_is_stripped():
+    from app.normalize.merchant import sanitize_merchant
+
+    cleaned = sanitize_merchant("American Express Banking Corp Ltd")
+    assert cleaned == "American Express"
+    assert "Banking" not in cleaned

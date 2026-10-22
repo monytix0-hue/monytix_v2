@@ -41,7 +41,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.monytix.app.auth.MonytixApi
+import com.monytix.app.shell.UiSessionStore
 import com.monytix.app.theme.LocalPersonalTheme
 import com.monytix.app.theme.PersonalRadius
 import com.monytix.app.theme.PersonalSpace
@@ -65,15 +65,16 @@ private val filters = listOf("All", "Spending", "Income", "Transfers")
 @Composable
 fun LiveDetail(
     page: LivePage,
-    api: MonytixApi,
-    token: suspend (Boolean) -> String?,
+    store: UiSessionStore,
     onBack: () -> Unit,
     onAskMoly: () -> Unit,
 ) {
-    var snapshot by remember { mutableStateOf(LiveSnapshot.unavailable()) }
-    LaunchedEffect(api) {
-        val json = api.getJson("/v1/ui/live", token)
-        snapshot = if (json.isNullOrBlank()) LiveSnapshot.unavailable() else LiveSnapshot.parse(json)
+    val snapshot = remember(store.liveJson) {
+        val json = store.liveJson
+        if (json.isNullOrBlank()) LiveSnapshot.unavailable() else LiveSnapshot.parse(json)
+    }
+    LaunchedEffect(store) {
+        if (!store.liveReady) store.refreshLive()
     }
     val theme = LocalPersonalTheme.current
     val copy = when (page) {
@@ -278,8 +279,8 @@ private fun TransactionsDetail(snapshot: LiveSnapshot) {
         shown.forEach { row ->
             PlainCard {
                 val theme = LocalPersonalTheme.current
-                val money = if (!row.amount.isNullOrBlank() && !row.currency.isNullOrBlank()) "${row.currency} ${row.amount}" else Unavailable
-                val mark = if (row.direction == "IN") R.drawable.fig_cash_arrow else if (row.direction == "OUT") R.drawable.fig_utensils else R.drawable.fig_tx_user
+                val money = formatLiveMoney(row.currency, row.amount)
+                val mark = if (row.direction == "IN") R.drawable.fig_cash_arrow else R.drawable.fig_tx_user
                 Row(horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s12), verticalAlignment = Alignment.CenterVertically) {
                     FigIcon(mark, 28.dp)
                     Column {
@@ -391,4 +392,17 @@ private fun PlainCard(modifier: Modifier = Modifier, content: @Composable Column
         verticalArrangement = Arrangement.spacedBy(PersonalSpace.s12),
         content = content,
     )
+}
+
+private fun formatLiveMoney(currency: String?, amount: String?): String {
+    if (currency.isNullOrBlank() || amount.isNullOrBlank()) {
+        return Unavailable
+    }
+    val value = amount.replace(",", "").toDoubleOrNull()
+    val formatted = if (value != null) {
+        String.format(java.util.Locale.US, "%,.2f", value)
+    } else {
+        amount
+    }
+    return "$currency $formatted"
 }

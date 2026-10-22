@@ -29,10 +29,11 @@ private enum NavGlyph {
 struct BusinessShellView: View {
     var api: MonytixApi
     var session: any AuthSession
+    var store: UiSessionStore
     var onSignOut: () -> Void
 
     var body: some View {
-        Chrome(api: api, session: session, onSignOut: onSignOut)
+        Chrome(api: api, session: session, store: store, onSignOut: onSignOut)
             .personalTheme()
     }
 }
@@ -41,6 +42,7 @@ private struct Chrome: View {
     @Environment(\.personalTheme) private var theme
     var api: MonytixApi
     var session: any AuthSession
+    var store: UiSessionStore
     var onSignOut: () -> Void
     @State private var destination = BusinessDestination.live
     @State private var page = LivePage.home
@@ -60,8 +62,7 @@ private struct Chrome: View {
             if destination == .live, page != .home {
                 LiveDetailView(
                     page: page,
-                    api: api,
-                    token: { force in await session.idToken(forceRefresh: force) },
+                    store: store,
                     onBack: { page = .home },
                     onAskMoly: { page = .moly }
                 )
@@ -93,7 +94,7 @@ private struct Chrome: View {
                     header
                     Group {
                         if destination == .live {
-                            LiveHomeView(api: api, onOpen: { page = $0 }, onViewMissions: {
+                            LiveHomeView(store: store, onOpen: { page = $0 }, onViewMissions: {
                                 destination = .missions
                                 resetMissions()
                                 resetDecisions()
@@ -103,13 +104,10 @@ private struct Chrome: View {
                             }, onViewMile: {
                                 destination = .mile
                                 resetMile()
-                            }) { force in
-                                await session.idToken(forceRefresh: force)
-                            }
+                            })
                         } else if destination == .decisions {
                             DecisionHomeView(
-                                api: api,
-                                token: { force in await session.idToken(forceRefresh: force) },
+                                store: store,
                                 onOpen: {
                                     decisionId = $0
                                     decisionPage = .weigh
@@ -117,8 +115,7 @@ private struct Chrome: View {
                             )
                         } else if destination == .missions {
                             MissionHomeView(
-                                api: api,
-                                token: { force in await session.idToken(forceRefresh: force) },
+                                store: store,
                                 onCreate: { missionPage = .create },
                                 onActive: {
                                     missionId = $0
@@ -131,8 +128,7 @@ private struct Chrome: View {
                             )
                         } else if destination == .mile {
                             MileHomeView(
-                                api: api,
-                                token: { force in await session.idToken(forceRefresh: force) },
+                                store: store,
                                 onOutcomes: { mileStack = [.outcomes] },
                                 onTrace: {
                                     mileEventId = $0
@@ -209,6 +205,9 @@ private struct Chrome: View {
                     step: addStep,
                     onStep: { self.addStep = $0 },
                     onClose: { self.addStep = nil },
+                    onImported: {
+                        Task { await store.invalidateAfterImport() }
+                    },
                     onViewTransactions: {
                         destination = .live
                         page = .transactions

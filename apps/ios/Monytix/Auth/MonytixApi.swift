@@ -9,7 +9,6 @@ enum ConfirmResult {
 final class MonytixApi {
     private let baseURL: String
     private let session = URLSession(configuration: .ephemeral)
-    private var cache: [String: Data] = [:]
 
     init(baseURL: String) {
         self.baseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -24,10 +23,6 @@ final class MonytixApi {
         session.getAllTasks { tasks in
             tasks.forEach { $0.cancel() }
         }
-    }
-
-    func clearCache() {
-        cache.removeAll()
     }
 
     func confirmSession(token: (Bool) async -> String?) async -> ConfirmResult {
@@ -173,12 +168,8 @@ final class MonytixApi {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
         do {
-            let (data, response) = try await session.data(for: request)
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            if method == "GET", (200..<300).contains(status) {
-                cache[path] = data
-            }
-            return status
+            let (_, response) = try await session.data(for: request)
+            return (response as? HTTPURLResponse)?.statusCode ?? 0
         } catch {
             return 0
         }

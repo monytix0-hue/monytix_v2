@@ -3,7 +3,6 @@ package com.monytix.app.live
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,6 +40,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.monytix.app.auth.MonytixApi
 import com.monytix.app.shell.UiSessionStore
 import com.monytix.app.theme.LocalPersonalTheme
 import com.monytix.app.theme.PersonalRadius
@@ -60,12 +60,12 @@ private val questions = listOf(
     "Which transactions affected my Comfort Weight?",
     "What should I understand about my Emergency Buffer?",
 )
-private val filters = listOf("All", "Spending", "Income", "Transfers")
-
 @Composable
 fun LiveDetail(
     page: LivePage,
     store: UiSessionStore,
+    api: MonytixApi,
+    token: suspend (Boolean) -> String?,
     onBack: () -> Unit,
     onAskMoly: () -> Unit,
 ) {
@@ -76,12 +76,15 @@ fun LiveDetail(
     LaunchedEffect(store) {
         if (!store.liveReady) store.refreshLive()
     }
+    if (page == LivePage.Transactions) {
+        TransactionScreen(api, token, onBack)
+        return
+    }
     val theme = LocalPersonalTheme.current
     val copy = when (page) {
         LivePage.ForYou -> "For you" to "What changed"
         LivePage.Pulse -> "Financial Pulse" to "Where you stand"
         LivePage.CashFlow -> "Cash flow" to "What’s ahead"
-        LivePage.Transactions -> "Transactions" to "Recorded activity"
         else -> "Moly" to "Ask about your money"
     }
     Column(
@@ -99,7 +102,6 @@ fun LiveDetail(
             LivePage.ForYou -> ForYou()
             LivePage.Pulse -> PulseDetail(onAskMoly)
             LivePage.CashFlow -> CashDetail(snapshot, onAskMoly)
-            LivePage.Transactions -> TransactionsDetail(snapshot)
             else -> MolyDetail()
         }
     }
@@ -239,69 +241,6 @@ private fun CashDetail(snapshot: LiveSnapshot, onAskMoly: () -> Unit) {
         Text(Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
     }
     DetailButton("Ask Moly") { onAskMoly() }
-}
-
-@Composable
-private fun TransactionsDetail(snapshot: LiveSnapshot) {
-    val summary = when {
-        !snapshot.transactionsKnown -> Unavailable
-        snapshot.hasRecordedTransactions -> "Recorded"
-        else -> "No recorded transactions"
-    }
-    SummaryCard("Recorded activity", summary)
-    var selected by remember { mutableStateOf(filters.first()) }
-    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s8)) {
-        filters.forEach { name ->
-            val on = name == selected
-            val theme = LocalPersonalTheme.current
-            Text(
-                name,
-                color = if (on) theme.action.label else theme.palette.textSecondary,
-                fontFamily = theme.fontFamily,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 14.sp,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(PersonalRadius.pill))
-                    .background(if (on) theme.action.default else theme.palette.surface)
-                    .border(1.dp, if (on) theme.action.default else theme.palette.border, RoundedCornerShape(PersonalRadius.pill))
-                    .clickable { selected = name }
-                    .padding(horizontal = PersonalSpace.s16, vertical = PersonalSpace.s12),
-            )
-        }
-    }
-    val shown = when (selected) {
-        "Income" -> snapshot.previews.filter { it.direction == "IN" }
-        "Spending" -> snapshot.previews.filter { it.direction == "OUT" }
-        "Transfers" -> emptyList()
-        else -> snapshot.previews
-    }
-    if (snapshot.previewsKnown && shown.isNotEmpty()) {
-        shown.forEach { row ->
-            PlainCard {
-                val theme = LocalPersonalTheme.current
-                val money = formatLiveMoney(row.currency, row.amount)
-                val mark = when (row.direction) {
-                    "IN" -> R.drawable.fig_cash_arrow
-                    "OUT" -> R.drawable.fig_utensils
-                    else -> R.drawable.fig_tx_user
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s12), verticalAlignment = Alignment.CenterVertically) {
-                    FigIcon(mark, 28.dp)
-                    Column {
-                        Text(row.description ?: Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        Text(money, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
-                        Text(row.transactionDate ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
-                    }
-                }
-            }
-        }
-    } else {
-        PlainCard {
-            val theme = LocalPersonalTheme.current
-            Text(Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-            Text(Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
-        }
-    }
 }
 
 @Composable

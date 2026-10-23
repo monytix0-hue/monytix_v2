@@ -63,6 +63,8 @@ private struct Chrome: View {
                 LiveDetailView(
                     page: page,
                     store: store,
+                    api: api,
+                    token: { force in await session.idToken(forceRefresh: force) },
                     onBack: { page = .home },
                     onAskMoly: { page = .moly }
                 )

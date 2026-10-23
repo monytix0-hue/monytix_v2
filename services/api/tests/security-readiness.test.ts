@@ -10,6 +10,9 @@ const ledger: LedgerRead = {
   async listTransactions() {
     return { items: [], nextCursor: null };
   },
+  async transactionFilters() {
+    return { categories: [] };
+  },
   async accountSummaries() {
     return [];
   },

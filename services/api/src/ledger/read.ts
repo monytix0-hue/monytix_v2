@@ -3,6 +3,7 @@ import { openPool } from "../db/pool.js";
 
 export type LedgerRead = {
   listTransactions(input: ListInput): Promise<TransactionPage>;
+  transactionFilters(ownerId: string): Promise<TransactionFilters>;
   accountSummaries(ownerId: string): Promise<AccountSummary[]>;
   overview(input: OverviewInput): Promise<Overview>;
   close(): Promise<void>;
@@ -16,7 +17,22 @@ export type ListInput = {
   to: string | null;
   accountId: string | null;
   direction: "IN" | "OUT" | null;
+  category: string | null;
+  subcategory: string | null;
   eventFamily: string | null;
+};
+
+export type FilterChoice = {
+  code: string;
+  name: string;
+};
+
+export type CategoryFilter = FilterChoice & {
+  subcategories: FilterChoice[];
+};
+
+export type TransactionFilters = {
+  categories: CategoryFilter[];
 };
 
 export type TransactionItem = {
@@ -28,6 +44,12 @@ export type TransactionItem = {
   direction: string;
   transactionDate: string | null;
   description: string | null;
+  categoryCode: string | null;
+  categoryName: string | null;
+  subcategoryCode: string | null;
+  subcategoryName: string | null;
+  accountName: string | null;
+  reference: string | null;
   duplicateOutcome: string;
   changeProvenance: string;
   financialEvent: {
@@ -114,6 +136,11 @@ type Row = {
   matched_rule_code: string | null;
   category_status: string | null;
   category_code: string | null;
+  subcategory_code: string | null;
+  category_name: string | null;
+  subcategory_name: string | null;
+  account_display_name: string | null;
+  source_reference: string | null;
   taxonomy_version: string | null;
   purpose_status: string | null;
   purpose_code: string | null;
@@ -136,6 +163,37 @@ const pageFilters = `
     OR cv.transaction_date < $5
     OR (cv.transaction_date = $5 AND cv.logical_transaction_id < $6::uuid)
   )
+  AND (
+    $8::text IS NULL
+    OR ($8 = 'none' AND COALESCE(choice.category_code, resolved.category_code) IS NULL)
+    OR ($8 <> 'none' AND COALESCE(choice.category_code, resolved.category_code) = $8)
+  )
+  AND (
+    $9::text IS NULL
+    OR ($9 = 'none' AND COALESCE(choice.subcategory_code, resolved.subcategory_code) IS NULL)
+    OR ($9 <> 'none' AND COALESCE(choice.subcategory_code, resolved.subcategory_code) = $9)
+  )
+`;
+
+const categoryLaterals = `
+LEFT JOIN LATERAL (
+  SELECT choice.category_code, choice.subcategory_code
+    FROM core.category_choice choice
+   WHERE choice.logical_transaction_id = cv.logical_transaction_id
+   ORDER BY choice.is_explicit DESC
+   LIMIT 1
+) choice ON true
+LEFT JOIN LATERAL (
+  SELECT cr.category_code, cr.subcategory_code
+    FROM intel.financial_event_resolution er
+    JOIN intel.category_resolution cr
+      ON cr.financial_event_resolution_id = er.financial_event_resolution_id
+     AND cr.is_current
+   WHERE er.logical_transaction_id = cv.logical_transaction_id
+     AND er.canonical_transaction_version_id = cv.canonical_transaction_version_id
+     AND er.is_current
+   LIMIT 1
+) resolved ON true
 `;
 
 const interpretationJoins = `
@@ -171,14 +229,12 @@ const listColumns = `
   e.rulebook_version,
   e.matched_rule_code,
   c.category_status,
-  COALESCE(
-    (SELECT choice.category_code
-       FROM core.category_choice choice
-      WHERE choice.logical_transaction_id = cv.logical_transaction_id
-      ORDER BY choice.is_explicit DESC
-      LIMIT 1),
-    c.category_code
-  ) AS category_code,
+  cv.chosen_category AS category_code,
+  cv.chosen_subcategory AS subcategory_code,
+  cat.display_name AS category_name,
+  sub.display_name AS subcategory_name,
+  fa.account_display_name,
+  cv.source_reference,
   c.taxonomy_version,
   p.purpose_status,
   p.purpose_code,
@@ -191,14 +247,22 @@ SELECT ${listColumns}
 FROM (
   SELECT cv.logical_transaction_id, cv.canonical_transaction_version_id, cv.financial_account_id,
          cv.amount, cv.currency_code, cv.direction, cv.transaction_date, cv.raw_description,
-         cv.duplicate_outcome, cv.change_provenance
+         cv.duplicate_outcome, cv.change_provenance, cv.source_reference,
+         COALESCE(choice.category_code, resolved.category_code) AS chosen_category,
+         COALESCE(choice.subcategory_code, resolved.subcategory_code) AS chosen_subcategory
     FROM core.canonical_transaction_version cv
     JOIN core.logical_transaction lt ON lt.logical_transaction_id = cv.logical_transaction_id
+    ${categoryLaterals}
    WHERE ${pageFilters}
    ORDER BY cv.transaction_date DESC, cv.logical_transaction_id DESC
    LIMIT $7
 ) cv
 ${interpretationJoins}
+LEFT JOIN core.financial_account fa ON fa.financial_account_id = cv.financial_account_id
+LEFT JOIN ref.taxonomy_category cat
+  ON cat.taxonomy_version = 'F10E-v1.2' AND cat.category_code = cv.chosen_category
+LEFT JOIN ref.taxonomy_subcategory sub
+  ON sub.taxonomy_version = 'F10E-v1.2' AND sub.subcategory_code = cv.chosen_subcategory
 ORDER BY cv.transaction_date DESC, cv.logical_transaction_id DESC
 `;
 
@@ -207,20 +271,28 @@ SELECT ${listColumns}
 FROM (
   SELECT cv.logical_transaction_id, cv.canonical_transaction_version_id, cv.financial_account_id,
          cv.amount, cv.currency_code, cv.direction, cv.transaction_date, cv.raw_description,
-         cv.duplicate_outcome, cv.change_provenance
+         cv.duplicate_outcome, cv.change_provenance, cv.source_reference,
+         COALESCE(choice.category_code, resolved.category_code) AS chosen_category,
+         COALESCE(choice.subcategory_code, resolved.subcategory_code) AS chosen_subcategory
     FROM core.canonical_transaction_version cv
     JOIN core.logical_transaction lt ON lt.logical_transaction_id = cv.logical_transaction_id
     JOIN intel.financial_event_resolution e
       ON e.logical_transaction_id = cv.logical_transaction_id
      AND e.canonical_transaction_version_id = cv.canonical_transaction_version_id
      AND e.is_current
+    ${categoryLaterals}
    WHERE ${pageFilters}
      AND e.resolution_outcome = 'RESOLVED'
-     AND e.event_family = $8
+     AND e.event_family = $10
    ORDER BY cv.transaction_date DESC, cv.logical_transaction_id DESC
    LIMIT $7
 ) cv
 ${interpretationJoins}
+LEFT JOIN core.financial_account fa ON fa.financial_account_id = cv.financial_account_id
+LEFT JOIN ref.taxonomy_category cat
+  ON cat.taxonomy_version = 'F10E-v1.2' AND cat.category_code = cv.chosen_category
+LEFT JOIN ref.taxonomy_subcategory sub
+  ON sub.taxonomy_version = 'F10E-v1.2' AND sub.subcategory_code = cv.chosen_subcategory
 ORDER BY cv.transaction_date DESC, cv.logical_transaction_id DESC
 `;
 
@@ -266,6 +338,12 @@ function mapItem(row: Row): TransactionItem {
     direction: row.direction,
     transactionDate: dateText(row.transaction_date),
     description: row.raw_description,
+    categoryCode: row.category_code,
+    categoryName: row.category_name,
+    subcategoryCode: row.subcategory_code,
+    subcategoryName: row.subcategory_name,
+    accountName: row.account_display_name,
+    reference: row.source_reference,
     duplicateOutcome: row.duplicate_outcome,
     changeProvenance: row.change_provenance,
     financialEvent: row.resolution_outcome
@@ -326,6 +404,8 @@ export function createLedgerRead(databaseUrl: string): LedgerRead {
           cursor?.date ?? null,
           cursor?.id ?? null,
           input.limit + 1,
+          input.category,
+          input.subcategory,
         ];
         const rows = await client.query<Row>(
           input.eventFamily ? listFamilySql : listSql,
@@ -339,6 +419,67 @@ export function createLedgerRead(databaseUrl: string): LedgerRead {
             ? encodeCursor(extra.transactionDate, extra.logicalTransactionId)
             : null,
         };
+      });
+    },
+
+    async transactionFilters(ownerId) {
+      return withOwner(ownerId, async (client) => {
+        const rows = await client.query<{
+          category_code: string | null;
+          subcategory_code: string | null;
+          category_name: string | null;
+          subcategory_name: string | null;
+        }>(
+          `SELECT DISTINCT
+                  COALESCE(choice.category_code, resolved.category_code) AS category_code,
+                  COALESCE(choice.subcategory_code, resolved.subcategory_code) AS subcategory_code,
+                  cat.display_name AS category_name,
+                  sub.display_name AS subcategory_name
+             FROM core.canonical_transaction_version cv
+             JOIN core.logical_transaction lt ON lt.logical_transaction_id = cv.logical_transaction_id
+             ${categoryLaterals}
+             LEFT JOIN ref.taxonomy_category cat
+               ON cat.taxonomy_version = 'F10E-v1.2'
+              AND cat.category_code = COALESCE(choice.category_code, resolved.category_code)
+             LEFT JOIN ref.taxonomy_subcategory sub
+               ON sub.taxonomy_version = 'F10E-v1.2'
+              AND sub.subcategory_code = COALESCE(choice.subcategory_code, resolved.subcategory_code)
+            WHERE cv.is_current
+              AND lt.identity_status = 'ACTIVE'
+              AND cv.duplicate_outcome <> 'EQUIVALENT_SUPERSEDED'`,
+        );
+        const grouped = new Map<string, { name: string; subcategories: Map<string, string> }>();
+        let uncategorized = false;
+        for (const row of rows.rows) {
+          if (!row.category_code) {
+            uncategorized = true;
+            continue;
+          }
+          const current = grouped.get(row.category_code) ?? {
+            name: row.category_name ?? row.category_code,
+            subcategories: new Map<string, string>(),
+          };
+          if (row.subcategory_code) {
+            current.subcategories.set(row.subcategory_code, row.subcategory_name ?? row.subcategory_code);
+          }
+          grouped.set(row.category_code, current);
+        }
+        const categories = [...grouped.entries()]
+          .sort((left, right) => left[1].name.localeCompare(right[1].name))
+          .map(([code, value]) => ({
+            code,
+            name: value.name,
+            subcategories: [
+              { code: "none", name: "Not recorded" },
+              ...[...value.subcategories.entries()]
+                .sort((left, right) => left[1].localeCompare(right[1]))
+                .map(([subCode, name]) => ({ code: subCode, name })),
+            ],
+          }));
+        if (uncategorized) {
+          categories.push({ code: "none", name: "Not recorded", subcategories: [] });
+        }
+        return { categories };
       });
     },
 

@@ -237,7 +237,7 @@ async function main(): Promise<void> {
       loaded = scale;
       const loadMs = Math.round(performance.now() - started);
       const listMs = await timed(() => ledger.listTransactions({
-        ownerId, limit: 20, cursor: null, from: null, to: null, accountId: null, direction: null, eventFamily: null,
+        ownerId, limit: 20, cursor: null, from: null, to: null, accountId: null, direction: null, category: null, subcategory: null, eventFamily: null,
       }));
       const summaryMs = await timed(() => ledger.accountSummaries(ownerId));
       const postgresDuring = dockerStats();
@@ -245,11 +245,11 @@ async function main(): Promise<void> {
       const molybotMs = await timed(async () => {
         await ledger.overview({ ownerId, from: "2026-10-01", to: "2026-10-31", currency: null });
         await ledger.listTransactions({
-          ownerId, limit: 50, cursor: null, from: null, to: null, accountId: null, direction: null, eventFamily: "LOAN_REPAYMENT",
+          ownerId, limit: 50, cursor: null, from: null, to: null, accountId: null, direction: null, category: null, subcategory: null, eventFamily: "LOAN_REPAYMENT",
         });
       });
       const page = await ledger.listTransactions({
-        ownerId, limit: 20, cursor: null, from: null, to: null, accountId: null, direction: null, eventFamily: null,
+        ownerId, limit: 20, cursor: null, from: null, to: null, accountId: null, direction: null, category: null, subcategory: null, eventFamily: null,
       });
       const overview = await ledger.overview({ ownerId, from: "2024-01-01", to: "2027-12-31", currency: "INR" });
       const summaries = await ledger.accountSummaries(ownerId);

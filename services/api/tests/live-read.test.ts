@@ -11,6 +11,9 @@ function ledger(overrides: Partial<LedgerRead> = {}): LedgerRead {
     async listTransactions() {
       return emptyPage;
     },
+    async transactionFilters() {
+      return { categories: [] };
+    },
     async accountSummaries() {
       return [];
     },

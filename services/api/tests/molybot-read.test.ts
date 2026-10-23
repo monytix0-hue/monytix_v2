@@ -7,6 +7,9 @@ import { signToken } from "./auth-fixture.js";
 test("MolyBot refuses a partial loan answer when more than one page matches", async () => {
   const signed = await signToken({ subject: "molybot-limit", expiresIn: "1h" });
   const ledger: LedgerRead = {
+    async transactionFilters() {
+      return { categories: [] };
+    },
     async listTransactions(input): Promise<TransactionPage> {
       if (input.eventFamily === "LOAN_REPAYMENT") {
         return { items: [], nextCursor: "more" };

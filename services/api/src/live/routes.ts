@@ -30,6 +30,8 @@ async function recorded(ledger: LedgerRead, ownerId: string, limit: number) {
     to: null,
     accountId: null,
     direction: null,
+    category: null,
+    subcategory: null,
     eventFamily: null,
   });
   const currencies = overview.currencies.map((row) => ({

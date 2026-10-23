@@ -130,6 +130,25 @@ test("ledger reads stay inside the authenticated owner", async (t) => {
          ($3, $4, 'F10D-v1.2', 'CC_001', 'P1', 'RESOLVED', 'CREDIT_CARD_PAYMENT')`,
       [loan.logicalId, loan.versionId, card.logicalId, card.versionId],
     );
+    const loanEvent = await admin.query<{ financial_event_resolution_id: string }>(
+      `SELECT financial_event_resolution_id
+         FROM intel.financial_event_resolution
+        WHERE logical_transaction_id = $1`,
+      [loan.logicalId],
+    );
+    await admin.query(
+      `INSERT INTO intel.category_resolution (
+         logical_transaction_id, financial_event_resolution_id, canonical_transaction_version_id,
+         taxonomy_version, category_code, subcategory_code, category_status
+       ) VALUES ($1, $2, $3, 'F10E-v1.2', 'FINANCIAL_SERVICES', 'LOAN_EMI', 'RESOLVED')`,
+      [loan.logicalId, loanEvent.rows[0]!.financial_event_resolution_id, loan.versionId],
+    );
+    await admin.query(
+      `INSERT INTO core.category_choice (
+         owner_id, logical_transaction_id, category_code, subcategory_code, match_token, match_scope, is_explicit
+       ) VALUES ($1, $2, 'FOOD_DINING', 'FOOD_DELIVERY', 'ZOMATO', 'EXACT_MERCHANT', false)`,
+      [personal, second.logicalId],
+    );
     await admin.query(
       `INSERT INTO core.balance_snapshot (financial_account_id, observed_at, balance_type, balance_amount, currency_code, source_quality)
        VALUES ($1, timestamptz '2026-02-01', 'AVAILABLE', 15.0000, 'INR', 'OBSERVED')`,
@@ -213,6 +232,64 @@ test("ledger reads stay inside the authenticated owner", async (t) => {
     assert.equal(Number(overviewBody.currencies[0]!.outflow), 90);
     assert.equal(Number(overviewBody.currencies[0]!.ordinaryOutflow), 0);
     assert.equal(overviewBody.currencies[0]!.events.some((event) => event.family === "LOAN_REPAYMENT"), true);
+
+    const food = await app.inject({
+      method: "GET",
+      url: "/v1/transactions?category=FOOD_DINING",
+      headers: headers(tokenA),
+    });
+    const foodItems = (food.json() as { items: Array<{ logicalTransactionId: string; categoryCode: string | null; categoryName: string | null; subcategoryCode: string | null; subcategoryName: string | null }> }).items;
+    assert.deepEqual(foodItems.map((item) => item.logicalTransactionId), [second.logicalId]);
+    assert.equal(foodItems[0]?.categoryName, "Food & Dining");
+    assert.equal(foodItems[0]?.subcategoryCode, "FOOD_DELIVERY");
+    assert.equal(foodItems[0]?.subcategoryName, "Food delivery");
+
+    const uncategorized = await app.inject({
+      method: "GET",
+      url: "/v1/transactions?category=none",
+      headers: headers(tokenA),
+    });
+    const uncategorizedIds = (uncategorized.json() as { items: Array<{ logicalTransactionId: string }> }).items.map((item) => item.logicalTransactionId);
+    assert.equal(uncategorizedIds.includes(second.logicalId), false);
+    assert.equal(uncategorizedIds.includes(loan.logicalId), false);
+
+    const emi = await app.inject({
+      method: "GET",
+      url: "/v1/transactions?subcategory=LOAN_EMI",
+      headers: headers(tokenA),
+    });
+    const emiItems = (emi.json() as { items: Array<{ logicalTransactionId: string; subcategoryName: string | null; accountName: string | null }> }).items;
+    assert.deepEqual(emiItems.map((item) => item.logicalTransactionId), [loan.logicalId]);
+    assert.equal(emiItems[0]?.subcategoryName, "Loan EMI and NBFC debits");
+    assert.equal(emiItems[0]?.accountName, `Personal ${stamp}`);
+
+    const foodUnset = await app.inject({
+      method: "GET",
+      url: "/v1/transactions?category=FOOD_DINING&subcategory=none",
+      headers: headers(tokenA),
+    });
+    assert.deepEqual(
+      (foodUnset.json() as { items: Array<{ logicalTransactionId: string }> }).items.map((item) => item.logicalTransactionId),
+      [],
+    );
+    const foodDelivery = await app.inject({
+      method: "GET",
+      url: "/v1/transactions?category=FOOD_DINING&subcategory=FOOD_DELIVERY",
+      headers: headers(tokenA),
+    });
+    assert.deepEqual(
+      (foodDelivery.json() as { items: Array<{ logicalTransactionId: string }> }).items.map((item) => item.logicalTransactionId),
+      [second.logicalId],
+    );
+
+    const filters = await app.inject({ method: "GET", url: "/v1/transaction-filters", headers: headers(tokenA) });
+    const filterBody = filters.json() as { categories: Array<{ code: string; subcategories: Array<{ code: string }> }> };
+    assert.equal(filterBody.categories.some((row) => row.code === "FOOD_DINING" && row.subcategories.some((sub) => sub.code === "FOOD_DELIVERY")), true);
+    assert.equal(filterBody.categories.some((row) => row.code === "FINANCIAL_SERVICES" && row.subcategories.some((sub) => sub.code === "LOAN_EMI")), true);
+    assert.equal(filterBody.categories.some((row) => row.code === "none"), true);
+
+    const badCategory = await app.inject({ method: "GET", url: "/v1/transactions?category=food", headers: headers(tokenA) });
+    assert.equal(badCategory.statusCode, 422);
 
     const unknown = await app.inject({ method: "GET", url: "/v1/transactions?from=2026-01-01&to=2026-01-01", headers: headers(tokenA) });
     const unknownItem = (unknown.json() as { items: Array<{ financialUse: { categoryCode: string | null } | null }> }).items[0];

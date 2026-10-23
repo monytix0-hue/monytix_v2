@@ -22,15 +22,14 @@ private let liveQuestions = [
     "What should I understand about my Emergency Buffer?",
 ]
 
-private let liveFilters = ["All", "Spending", "Income", "Transfers"]
-
 struct LiveDetailView: View {
     var page: LivePage
     var store: UiSessionStore
+    var api: MonytixApi
+    var token: (Bool) async -> String?
     var onBack: () -> Void
     var onAskMoly: () -> Void
     @Environment(\.colorScheme) private var colorScheme
-    @State private var filter = liveFilters[0]
 
     private var snapshot: LiveSnapshot {
         guard let data = store.liveData else { return .unavailable }
@@ -38,25 +37,31 @@ struct LiveDetailView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: PersonalSpace.s20) {
-                backBar
-                switch page {
-                case .forYou:
-                    forYou
-                case .pulse:
-                    pulse
-                case .cashFlow:
-                    cash
-                case .transactions:
-                    transactions
-                default:
-                    moly
+        Group {
+            if page == .transactions {
+                TransactionLedger(api: api, token: token, onBack: onBack)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: PersonalSpace.s20) {
+                        backBar
+                        switch page {
+                        case .forYou:
+                            forYou
+                        case .pulse:
+                            pulse
+                        case .cashFlow:
+                            cash
+                        case .transactions:
+                            EmptyView()
+                        default:
+                            moly
+                        }
+                    }
+                    .padding(.horizontal, PersonalSpace.s20)
+                    .padding(.top, PersonalSpace.s16)
+                    .padding(.bottom, PersonalSpace.s32)
                 }
             }
-            .padding(.horizontal, PersonalSpace.s20)
-            .padding(.top, PersonalSpace.s16)
-            .padding(.bottom, PersonalSpace.s32)
         }
         .personalCanvas()
         .task {
@@ -190,62 +195,6 @@ struct LiveDetailView: View {
             Text("Unavailable").personalText(.secondary, size: 15)
         }
         detailButton("Ask Moly", action: onAskMoly)
-    }
-
-    @ViewBuilder
-    private var transactions: some View {
-        let summaryText: String = {
-            if !snapshot.transactionsKnown { return "Unavailable" }
-            return snapshot.hasRecordedTransactions ? "Recorded" : "No recorded transactions"
-        }()
-        summary("Recorded activity", summaryText)
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: PersonalSpace.s8) {
-                ForEach(liveFilters, id: \.self) { name in
-                    let on = name == filter
-                    Button {
-                        filter = name
-                    } label: {
-                        Text(name)
-                            .font(.custom("Inter-SemiBold", size: 14))
-                            .foregroundStyle(on ? PersonalTokens.action.label : palette.textSecondary)
-                            .padding(.horizontal, PersonalSpace.s16)
-                            .padding(.vertical, PersonalSpace.s12)
-                            .background(on ? PersonalTokens.action.default : palette.surface, in: Capsule())
-                            .overlay(Capsule().stroke(on ? PersonalTokens.action.default : palette.border, lineWidth: 1))
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-        let shown: [RecordedPreview] = {
-            switch filter {
-            case "Income": return snapshot.previews.filter { $0.direction == "IN" }
-            case "Spending": return snapshot.previews.filter { $0.direction == "OUT" }
-            case "Transfers": return []
-            default: return snapshot.previews
-            }
-        }()
-        if snapshot.previewsKnown, !shown.isEmpty {
-            ForEach(shown) { row in
-                let money = (row.amount?.isEmpty == false && row.currency?.isEmpty == false) ? "\(row.currency ?? "") \(row.amount ?? "")" : "Unavailable"
-                card {
-                    HStack(spacing: PersonalSpace.s12) {
-                        FigIcon(name: row.direction == "IN" ? "FigCashArrow" : (row.direction == "OUT" ? "FigUtensils" : "FigTxUser"), size: 28)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(row.description ?? "Unavailable").personalText(.primary, size: 16, weight: .bold)
-                            Text(money).personalText(.secondary, size: 15)
-                            Text(row.transactionDate ?? "Unavailable").personalText(.secondary, size: 13)
-                        }
-                    }
-                }
-            }
-        } else {
-            card {
-                Text("Unavailable").personalText(.primary, size: 16, weight: .bold)
-                Text("Unavailable").personalText(.secondary, size: 15)
-            }
-        }
     }
 
     @ViewBuilder

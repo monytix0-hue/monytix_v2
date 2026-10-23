@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
-import type { LedgerRead } from "./read.js";
+import { displayTransactionTitle } from "../live/displayTitle.js";
+import type { LedgerRead, TransactionItem } from "./read.js";
 import { decodeCursor } from "./read.js";
 
 export type LedgerRouteOptions = {
@@ -9,6 +10,7 @@ export type LedgerRouteOptions = {
 const dateText = /^\d{4}-\d{2}-\d{2}$/;
 const uuidText = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const currencyText = /^[A-Z]{3}$/;
+const codeText = /^(?:none|[A-Z0-9_]{1,64})$/;
 
 const questions = [
   "How much money came in this month?",
@@ -22,6 +24,10 @@ type Question = (typeof questions)[number];
 
 function queryText(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function presentTransaction(item: TransactionItem): TransactionItem {
+  return { ...item, description: displayTransactionTitle(item.description) };
 }
 
 function monthRange(now = new Date()): { from: string; to: string } {
@@ -45,6 +51,8 @@ export const ledgerRoutes: FastifyPluginAsync<LedgerRouteOptions> = async (app, 
     const to = queryText(query.to);
     const accountId = queryText(query.accountId);
     const direction = queryText(query.direction);
+    const category = queryText(query.category);
+    const subcategory = queryText(query.subcategory);
     const cursor = queryText(query.cursor);
     const limitText = queryText(query.limit);
     const limit = limitText ? Number(limitText) : 20;
@@ -55,6 +63,9 @@ export const ledgerRoutes: FastifyPluginAsync<LedgerRouteOptions> = async (app, 
       return reply.status(422).send({ error: "invalid_request" });
     }
     if (direction && direction !== "IN" && direction !== "OUT") {
+      return reply.status(422).send({ error: "invalid_request" });
+    }
+    if ((category && !codeText.test(category)) || (subcategory && !codeText.test(subcategory))) {
       return reply.status(422).send({ error: "invalid_request" });
     }
     if (cursor && !decodeCursor(cursor)) {
@@ -68,9 +79,22 @@ export const ledgerRoutes: FastifyPluginAsync<LedgerRouteOptions> = async (app, 
       to,
       accountId,
       direction: direction as "IN" | "OUT" | null,
+      category,
+      subcategory,
       eventFamily: null,
     });
-    return { contract: "ledger-read-v0.1", ...page };
+    return { contract: "ledger-read-v0.1", ...page, items: page.items.map(presentTransaction) };
+  });
+
+  app.get("/v1/transaction-filters", async (request, reply) => {
+    if (!request.actorId) {
+      return reply.status(401).send({ error: "unauthorized" });
+    }
+    if (!request.ownerId || !ledger) {
+      return reply.status(403).send({ error: "owner_forbidden" });
+    }
+    const filters = await ledger.transactionFilters(request.ownerId);
+    return { contract: "transaction-filters-v0.1", ...filters };
   });
 
   app.get("/v1/accounts/summaries", async (request, reply) => {
@@ -129,6 +153,8 @@ export const ledgerRoutes: FastifyPluginAsync<LedgerRouteOptions> = async (app, 
         to: null,
         accountId: null,
         direction: null,
+        category: null,
+        subcategory: null,
         eventFamily: null,
       });
       return {
@@ -154,6 +180,8 @@ export const ledgerRoutes: FastifyPluginAsync<LedgerRouteOptions> = async (app, 
         to: null,
         accountId: null,
         direction: null,
+        category: null,
+        subcategory: null,
         eventFamily: family,
       });
       if (page.nextCursor) {

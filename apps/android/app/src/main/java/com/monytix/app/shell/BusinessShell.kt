@@ -128,6 +128,8 @@ fun BusinessShell(
                     LiveDetail(
                         page = page,
                         store = store,
+                        api = api,
+                        token = token,
                         onBack = { page = LivePage.Home },
                         onAskMoly = { page = LivePage.Moly },
                     )

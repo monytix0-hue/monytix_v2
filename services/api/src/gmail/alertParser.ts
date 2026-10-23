@@ -86,6 +86,7 @@ const boilerplatePatterns: RegExp[] = [
   /every corner of your home/i,
   /recovery of the overdue/i,
   /^set-?off\b/i,
+  /\byou in accordance\b/i,
 ];
 const weakMerchant = /^(?:time|times|all|home|us|it|this|that|the|here|there|now|today|tomorrow)$/i;
 const ownAccountPhrase = /^(?:your\s+)?(?:[\w&.\s-]+?\s+)?(?:bank\s+)?(?:a\/c|acct|account|card)(?:\s+ending(?:\s+in)?\s+\d{4})?$/i;
@@ -98,6 +99,22 @@ const counterpartyStop = /\b(?:on|via|ref|utr|rrn|avail|for|a\/c|to|at|from|towa
 const vpaParenMerchant =
   /\b(?:towards|to)\s+VPA\s+\S+@\S+\s*\(([^)]+)\)|\bVPA\s+\S+@\S+\s*\(([^)]+)\)|\bVPA\s*\(([^)]+)\)|\bVPA\s+([A-Za-z][A-Za-z0-9._-]{1,40})\b/i;
 const cardAtMerchant = /\bat\s+([A-Z][A-Z0-9]{2,}(?:\s+[A-Z][A-Z0-9]+)*)\b/;
+
+/** Due notes, loan reminders, and marketing are not recorded activity. */
+export function isNoticeEmail(subject: string, body: string): boolean {
+  const text = `${subject}\n${body}`;
+  if (/\bstanding instruction\b/i.test(text) && /\bis due\b/i.test(text)) {
+    return true;
+  }
+  if (/please note that all important communications/i.test(text) || /\ba platform\b/i.test(text)) {
+    return true;
+  }
+  const posted = /\btowards\s+VPA\b/i.test(body) || /\bis\s+(?:debited|credited)\b/i.test(body);
+  if (!posted && /\byour\s+\S+\s+loan\b/i.test(text)) {
+    return true;
+  }
+  return false;
+}
 
 export function isNonTransactionalEmail(subject: string, body: string): boolean {
   const header = subject.trim();
@@ -130,6 +147,16 @@ export function parseTransactionFromEmail(
   if (!accountMovement.test(clean) && !vpaPattern.test(clean)) {
     return null;
   }
+  if (isNoticeEmail(subject, clean)) {
+    return null;
+  }
+  if (/\byou in accordance\b/i.test(clean) && !structuredMerchant(clean)) {
+    return null;
+  }
+  const counterparty = counterpartyOf(clean, direction.flow);
+  if (isBoilerplateCounterparty(counterparty)) {
+    return null;
+  }
   const accountLast4 = clean.match(/(?:a\/c|acct|account|card)\s*(?:ending\s*(?:in\s*)?)?(?:no\.?)?\s*[*xX]*(\d{4})\b/i)?.[1];
   const paymentRef = clean.match(/\b(?:ref(?:erno)?|rrn|utr|txn\s*id)[:\s]*([0-9]{10,12}|[A-Za-z0-9]{12,16})\b/i)?.[1];
   const postedAt = postedAtFromText(clean) ?? hint?.postedAt;
@@ -140,7 +167,7 @@ export function parseTransactionFromEmail(
     accountLast4,
     paymentRef,
     channel: channelOf(clean),
-    counterparty: counterpartyOf(clean, direction.flow),
+    counterparty,
     postedAt,
     rawExcerpt: clean.slice(0, 500),
   };

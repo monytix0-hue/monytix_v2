@@ -151,6 +151,32 @@ test("footer-only to-support phrase does not become the merchant", () => {
   assert.equal(parsed?.counterparty, "General Spend");
 });
 
+test("due notes, loan reminders, and marketing are not transactions", () => {
+  const due =
+    "INR 59.00 has been debited from your account ending 6544. Google Play through Standing Instruction YWizzWVOnL is due.";
+  assert.equal(parseTransactionFromEmail(due), null);
+
+  const loan =
+    "INR 13,793.00 has been debited from your account ending 6544 towards your ABCL Loan on 05-Oct-2026.";
+  assert.equal(parseTransactionFromEmail(loan), null);
+
+  const saison =
+    "Credit Saison India! Please note that all important communications like loan repayment alerts. INR 1.00 credited to your account.";
+  assert.equal(parseTransactionFromEmail(saison), null);
+
+  const platform =
+    "SMERGERS, a platform credited INR 35.00 to your account.";
+  assert.equal(parseTransactionFromEmail(platform), null);
+
+  const fragment =
+    "INR 5,900.00 debited from your account to you in accordance on 21-Oct-2026.";
+  assert.equal(parseTransactionFromEmail(fragment), null);
+
+  const figma =
+    "Rs.2285.89 is debited from your HDFC Bank Debit Card ending 1514 at FIGMA on 08 Oct, 2026.";
+  assert.equal(parseTransactionFromEmail(figma)?.counterparty, "FIGMA");
+});
+
 test("a market digest that mentions credited amounts is not a credit", () => {
   const digest = `
 All you need to know about the day. Groww Digest 21 October 2026.

@@ -186,6 +186,13 @@ test("the spot migration stages alerts and wakes the worker", () => {
   assert.match(migration, /not canonical ledger truth/);
 });
 
+test("reconnecting a mailbox reopens the initial scan window", () => {
+  const migration = readFileSync(new URL("../../../database/migrations/0044_gmail_reconnect_rescan.sql", import.meta.url), "utf8");
+  assert.match(migration, /initial_window_drained = false/);
+  assert.match(migration, /pg_notify\('gmail_ingest'/);
+  assert.match(migration, /ops\.connect_gmail_mailbox/);
+});
+
 test("promotion writes a positive ledger amount through a financial account", () => {
   const migration = readFileSync(new URL("../../../database/migrations/0032_gmail_spot_promote.sql", import.meta.url), "utf8");
   assert.match(migration, /ops\.promote_gmail_spot/);

@@ -34,7 +34,7 @@ test("a credit names the sender and a missing reference hashes the alert", () =>
 });
 
 test("same amount on different gmail messages gets distinct hash keys", () => {
-  const parsed = parseTransactionFromEmail("INR 50.00 debited via UPI to Coffee Shop on 21-Oct-2026.");
+  const parsed = parseTransactionFromEmail("INR 50.00 debited from your account via UPI to Coffee Shop on 21-Oct-2026.");
   assert.ok(parsed);
   const left = spotIdempotencyKey("owner-1", parsed!, "gmail-a");
   const right = spotIdempotencyKey("owner-1", parsed!, "gmail-b");
@@ -145,10 +145,21 @@ We are here to support you in every step of the way.
 
 test("footer-only to-support phrase does not become the merchant", () => {
   const body =
-    "INR 99.00 debited via UPI on 21-Oct-2026. We are here to support you in every step of the way.";
+    "INR 99.00 debited from your account via UPI on 21-Oct-2026. We are here to support you in every step of the way.";
   const parsed = parseTransactionFromEmail(body);
   assert.equal(parsed?.amount, "99.00");
   assert.equal(parsed?.counterparty, "General Spend");
+});
+
+test("a market digest that mentions credited amounts is not a credit", () => {
+  const digest = `
+All you need to know about the day. Groww Digest 21 October 2026.
+Sensex 73,709.69. Nifty 22,811.35.
+The company received INR 1,011 after the dividend.
+Federation of Automobile Dealers Associations (FADA) reported INR 673.
+212 anchor investors ahead of its IPO were credited INR 8,109.84.
+`;
+  assert.equal(parseTransactionFromEmail(digest), null);
 });
 
 test("HDFC towards-VPA parenthetical and card at-MERCHANT win", () => {

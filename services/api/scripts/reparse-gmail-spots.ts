@@ -7,7 +7,7 @@
 import { readFileSync, appendFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import pg from "pg";
-import { isNonTransactionalEmail, parseTransactionFromEmail, readableText } from "../src/gmail/alertParser.js";
+import { parseTransactionFromEmail } from "../src/gmail/alertParser.js";
 import { displayTransactionTitle } from "../src/live/displayTitle.js";
 import { extractMimeMessage, messageDate, messageSubject, type ExtractedText } from "../src/gmail/mime.js";
 import { unsealCredential } from "../src/gmail/secret.js";
@@ -432,7 +432,7 @@ async function main(): Promise<void> {
             const body = alertBody(extracted.texts);
             const subject = messageSubject(raw);
             const alert = parseTransactionFromEmail(body, { postedAt: messageDate(raw), subject });
-            if (!alert && isNonTransactionalEmail(subject, readableText(body))) {
+            if (!alert) {
               const outcome = await dropRejectedSpot(local, spot, dryRun, logicalFks, versionFks);
               log({
                 event: "reparse_rejected",
@@ -446,12 +446,6 @@ async function main(): Promise<void> {
               counts.rejected += 1;
               if (outcome === "ledger") counts.ledgerRemoved += 1;
               if (outcome === "shared") counts.skippedShared += 1;
-            } else if (!alert) {
-              counts.unparsed += 1;
-              const title = displayTransactionTitle(`${spot.channel} / ${spot.counterparty}`);
-              if (!dryRun && spot.logical_transaction_id && await writeLedgerTitle(local, spot.logical_transaction_id, title)) {
-                counts.cleanedOnly += 1;
-              }
             } else if (dryRun) {
               counts.updated += 1;
             } else {

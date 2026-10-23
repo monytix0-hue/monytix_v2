@@ -24,6 +24,9 @@ const creditVerb = /\b(credited(?:\s+by|\s+to)?|received(?:\s+from)?|deposited|r
 const amountPattern = /(?:INR|Rs\.?|₹)\s*([\d,]+\.?\d*)/gi;
 const balanceCue = /\b(?:avail(?:able)?|avl)\s*bal|\bbalance\b|\bbal\b/i;
 const vpaPattern = /\b([A-Za-z0-9][A-Za-z0-9._-]{0,40}@[A-Za-z0-9][A-Za-z0-9.-]{1,40})\b/;
+/** A newsletter can say "credited" next to a rupee figure. A spot needs an account movement. */
+const accountMovement =
+  /\b(?:is|was|been)\s+(?:debited|credited)\b|\b(?:debited|credited)\s+(?:from|to)\s+your\b|\b(?:debited|credited)\s+from\s+(?:your\s+)?(?:a\/c|acct|account|card)\b|\btowards\s+VPA\b|\b(?:a\/c|acct|account|card)\s+ending\b/i;
 // "Never share your OTP" stays a merchant-title blacklist entry below. It must not
 // reject the whole message: real debit alerts carry that sentence in the footer.
 const disclaimerNoise = /\b(?:unauthori[sz]ed\b.*\bfraudulent|\bfraudulent\b.*\bunauthori[sz]ed|statutory\s+warning)\b/i;
@@ -122,6 +125,9 @@ export function parseTransactionFromEmail(
   }
   const amount = amountNear(clean, direction.index);
   if (!amount) {
+    return null;
+  }
+  if (!accountMovement.test(clean) && !vpaPattern.test(clean)) {
     return null;
   }
   const accountLast4 = clean.match(/(?:a\/c|acct|account|card)\s*(?:ending\s*(?:in\s*)?)?(?:no\.?)?\s*[*xX]*(\d{4})\b/i)?.[1];

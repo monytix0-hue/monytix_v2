@@ -13,6 +13,7 @@ struct RecordedPreview: Equatable, Identifiable {
     let direction: String?
     let transactionDate: String?
     let description: String?
+    let accountName: String?
 }
 
 struct ActiveMission: Equatable {
@@ -60,7 +61,8 @@ struct LiveSnapshot: Equatable {
                 currency: row["currency"] as? String,
                 direction: row["direction"] as? String,
                 transactionDate: row["transactionDate"] as? String,
-                description: row["description"] as? String
+                description: row["description"] as? String,
+                accountName: row["accountName"] as? String
             )
         }
         let balanceText: String? = (balance?["available"] as? Bool) == true && !(amount ?? "").isEmpty && !(currency ?? "").isEmpty
@@ -162,6 +164,9 @@ struct LiveHomeView: View {
                                 .lineLimit(2)
                             Text("\(money) · \(row.transactionDate ?? "Unavailable")")
                                 .personalText(.secondary, size: 13)
+                            if let account = row.accountName, !account.isEmpty {
+                                Text(account).personalText(.secondary, size: 13)
+                            }
                         }
                     }
                 }

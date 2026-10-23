@@ -145,6 +145,14 @@ private fun Welcome(snapshot: LiveSnapshot, onOpen: (LivePage) -> Unit) {
                         fontFamily = theme.fontFamily,
                         fontSize = 13.sp,
                     )
+                    if (!row.accountName.isNullOrBlank()) {
+                        Text(
+                            row.accountName,
+                            color = theme.palette.textSecondary,
+                            fontFamily = theme.fontFamily,
+                            fontSize = 13.sp,
+                        )
+                    }
                 }
             }
         }

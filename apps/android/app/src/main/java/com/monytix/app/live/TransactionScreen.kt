@@ -212,6 +212,9 @@ fun TransactionScreen(
                                     if (!row.categoryName.isNullOrBlank()) {
                                         Text(row.categoryName, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
                                     }
+                                    if (!row.accountName.isNullOrBlank()) {
+                                        Text(row.accountName, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+                                    }
                                 }
                                 Spacer(Modifier.width(PersonalSpace.s8))
                                 Text(
@@ -530,15 +533,15 @@ private fun parsePage(json: String): LedgerPage {
                 add(
                     LedgerTransaction(
                         id = id,
-                        amount = row.optString("amount").ifBlank { null },
-                        currency = row.optString("currency").trim().ifBlank { null },
-                        direction = row.optString("direction").ifBlank { null },
-                        transactionDate = row.optString("transactionDate").ifBlank { null },
-                        description = row.optString("description").ifBlank { null },
-                        categoryName = row.optString("categoryName").ifBlank { null },
-                        subcategoryName = row.optString("subcategoryName").ifBlank { null },
-                        accountName = row.optString("accountName").ifBlank { null },
-                        reference = row.optString("reference").ifBlank { null },
+                        amount = row.optionalText("amount"),
+                        currency = row.optionalText("currency"),
+                        direction = row.optionalText("direction"),
+                        transactionDate = row.optionalText("transactionDate"),
+                        description = row.optionalText("description"),
+                        categoryName = row.optionalText("categoryName"),
+                        subcategoryName = row.optionalText("subcategoryName"),
+                        accountName = row.optionalText("accountName"),
+                        reference = row.optionalText("reference"),
                     ),
                 )
             }

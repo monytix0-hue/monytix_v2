@@ -2,6 +2,11 @@ package com.monytix.app.live
 
 import org.json.JSONObject
 
+internal fun JSONObject.optionalText(key: String): String? {
+    if (isNull(key)) return null
+    return optString(key).trim().ifBlank { null }
+}
+
 data class RecordedCurrency(
     val currency: String,
     val inflow: String,
@@ -15,6 +20,7 @@ data class RecordedPreview(
     val direction: String?,
     val transactionDate: String?,
     val description: String?,
+    val accountName: String?,
 )
 
 data class ActiveMission(
@@ -78,11 +84,12 @@ data class LiveSnapshot(
                             add(
                                 RecordedPreview(
                                     id = id,
-                                    amount = row.optString("amount").ifBlank { null },
-                                    currency = row.optString("currency").ifBlank { null },
-                                    direction = row.optString("direction").ifBlank { null },
-                                    transactionDate = row.optString("transactionDate").ifBlank { null },
-                                    description = row.optString("description").ifBlank { null },
+                                    amount = row.optionalText("amount"),
+                                    currency = row.optionalText("currency"),
+                                    direction = row.optionalText("direction"),
+                                    transactionDate = row.optionalText("transactionDate"),
+                                    description = row.optionalText("description"),
+                                    accountName = row.optionalText("accountName"),
                                 ),
                             )
                         }

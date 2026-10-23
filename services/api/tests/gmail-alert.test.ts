@@ -251,6 +251,16 @@ test("promotion writes a positive ledger amount through a financial account", ()
   assert.doesNotMatch(migration, /normalisation_status/);
 });
 
+test("origin labels name a gmail account from the bank, card, and last four", () => {
+  const migration = readFileSync(new URL("../../../database/migrations/0046_account_origin_label.sql", import.meta.url), "utf8");
+  assert.match(migration, /ACCOUNT-ORIGIN-LABEL/);
+  assert.match(migration, /ops\.promote_gmail_spot/);
+  assert.match(migration, /INSERT INTO core\.financial_account/);
+  assert.match(migration, /ops\.movement_account_label\(v_spot\.raw_excerpt, v_spot\.channel, v_mask, NULL\)/);
+  assert.match(migration, /ops\.apply_movement_account_label\(\s*v_account, v_spot\.raw_excerpt, v_spot\.channel, v_mask, NULL\s*\)/);
+  assert.match(migration, /WHEN v_name ~\* 'credit card' THEN 'CREDIT_CARD'/);
+});
+
 test("clean-title promote stores counterparty without channel slash prefix", () => {
   const migration = readFileSync(new URL("../../../database/migrations/0042_gmail_spot_promote_clean_title.sql", import.meta.url), "utf8");
   assert.match(migration, /GMAIL-SPOT-CLEAN-TITLE/);

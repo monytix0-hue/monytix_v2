@@ -125,6 +125,8 @@ async function mapBoundExtraction(client: pg.Client, documentId: string, extract
     return;
   }
   await client.query("SELECT ops.bind_statement_for_mapping($1::uuid)", [documentId]);
+  const bank = identifyBank(context.filename, context.sender);
+  await client.query("SELECT ops.name_bound_statement_account($1::uuid, $2)", [documentId, bank]);
   await client.query("SELECT ops.map_statement_extraction($1::uuid)", [extractionRunId]);
   await client.query("SELECT ops.publish_structure_extraction_run($1::uuid)", [extractionRunId]);
   await client.query("SELECT ops.interpret_extraction_run($1::uuid)", [extractionRunId]);

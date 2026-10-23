@@ -216,6 +216,9 @@ struct TransactionLedger: View {
                     if let category = row.categoryName, !category.isEmpty {
                         Text(category).personalText(.secondary, size: 13)
                     }
+                    if let account = row.accountName, !account.isEmpty {
+                        Text(account).personalText(.secondary, size: 13)
+                    }
                 }
                 Spacer(minLength: PersonalSpace.s8)
                 Text(money(row))

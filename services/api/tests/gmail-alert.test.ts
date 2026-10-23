@@ -157,7 +157,7 @@ test("due notes, loan reminders, and marketing are not transactions", () => {
   assert.equal(parseTransactionFromEmail(due), null);
 
   const loan =
-    "INR 13,793.00 has been debited from your account ending 6544 towards your ABCL Loan on 05-Oct-2026.";
+    "your EMI of Rs. 13793.0 towards your ABCL Loan A/C no. LDS-1 is due on 05-10-2026. Maintain balance till the EMI is debited. Your account ending 6544.";
   assert.equal(parseTransactionFromEmail(loan), null);
 
   const saison =
@@ -175,6 +175,15 @@ test("due notes, loan reminders, and marketing are not transactions", () => {
   const figma =
     "Rs.2285.89 is debited from your HDFC Bank Debit Card ending 1514 at FIGMA on 08 Oct, 2026.";
   assert.equal(parseTransactionFromEmail(figma)?.counterparty, "FIGMA");
+
+  const imps =
+    "An amount of INR 10,000.00 has been debited to your A/C. No. XX2444 on 31-AUG-2026 on account of IMPS:624398901284/kirankumar k v k n Available Balance is INR 39,748.96. Contact us at 18001200 (Toll Free).";
+  assert.equal(parseTransactionFromEmail(imps)?.counterparty, "Kirankumar K V K N");
+
+  const interest =
+    "Greetings from SBM Bank India! Your account XX1794 is credited with INR 0.01 on 01-09-2026. Info:20052101241794:Int.Pd:01-08-20.";
+  assert.equal(parseTransactionFromEmail(interest)?.counterparty, "Interest");
+  assert.equal(parseTransactionFromEmail(interest)?.amount, "0.01");
 });
 
 test("a market digest that mentions credited amounts is not a credit", () => {

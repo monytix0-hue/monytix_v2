@@ -87,6 +87,8 @@ const boilerplatePatterns: RegExp[] = [
   /recovery of the overdue/i,
   /^set-?off\b/i,
   /\byou in accordance\b/i,
+  /\(\s*toll free\s*\)/i,
+  /\byour account\s+\S+\s+is credited\b/i,
 ];
 const weakMerchant = /^(?:time|times|all|home|us|it|this|that|the|here|there|now|today|tomorrow)$/i;
 const ownAccountPhrase = /^(?:your\s+)?(?:[\w&.\s-]+?\s+)?(?:bank\s+)?(?:a\/c|acct|account|card)(?:\s+ending(?:\s+in)?\s+\d{4})?$/i;
@@ -106,10 +108,13 @@ export function isNoticeEmail(subject: string, body: string): boolean {
   if (/\bstanding instruction\b/i.test(text) && /\bis due\b/i.test(text)) {
     return true;
   }
+  if (/\bemi\b/i.test(text) && /\bis due\b/i.test(text)) {
+    return true;
+  }
   if (/please note that all important communications/i.test(text) || /\ba platform\b/i.test(text)) {
     return true;
   }
-  const posted = /\btowards\s+VPA\b/i.test(body) || /\bis\s+(?:debited|credited)\b/i.test(body);
+  const posted = /\btowards\s+VPA\b/i.test(body) || /\b(?:has been|was)\s+debited\s+from\b/i.test(body);
   if (!posted && /\byour\s+\S+\s+loan\b/i.test(text)) {
     return true;
   }
@@ -316,6 +321,16 @@ export function isBoilerplateCounterparty(text: string): boolean {
 
 /** HDFC-style "towards VPA x@y (Merchant)" / card "at APPLESERVICES". */
 function structuredMerchant(clean: string): string | null {
+  if (/\bint\.?\s*pd\b/i.test(clean)) {
+    return "Interest";
+  }
+  const imps = clean.match(/\bIMPS:\d+\/([A-Za-z][A-Za-z .']+?)(?=\s+Available|\s+For\b|$)/i);
+  if (imps?.[1]) {
+    const name = titleCase(imps[1]);
+    if (name && !isBoilerplateCounterparty(name)) {
+      return name.slice(0, 120);
+    }
+  }
   const vpa = clean.match(vpaParenMerchant);
   if (vpa) {
     const name = cleanMerchantCandidate(vpa[1] ?? vpa[2] ?? vpa[3] ?? vpa[4] ?? "");
@@ -352,6 +367,10 @@ function namedCounterparty(clean: string, flow: SpotAlert["flow"]): string | nul
     return trimmed.slice(0, 120);
   }
   return null;
+}
+
+function titleCase(text: string): string {
+  return text.trim().replace(/\s+/g, " ").replace(/\b[a-z]/g, (ch) => ch.toUpperCase());
 }
 
 function cleanMerchantCandidate(text: string): string {

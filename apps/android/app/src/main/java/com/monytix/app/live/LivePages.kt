@@ -280,7 +280,11 @@ private fun TransactionsDetail(snapshot: LiveSnapshot) {
             PlainCard {
                 val theme = LocalPersonalTheme.current
                 val money = formatLiveMoney(row.currency, row.amount)
-                val mark = if (row.direction == "IN") R.drawable.fig_cash_arrow else R.drawable.fig_tx_user
+                val mark = when (row.direction) {
+                    "IN" -> R.drawable.fig_cash_arrow
+                    "OUT" -> R.drawable.fig_utensils
+                    else -> R.drawable.fig_tx_user
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s12), verticalAlignment = Alignment.CenterVertically) {
                     FigIcon(mark, 28.dp)
                     Column {

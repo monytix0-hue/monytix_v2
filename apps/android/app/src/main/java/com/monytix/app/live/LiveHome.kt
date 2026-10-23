@@ -127,7 +127,7 @@ private fun Welcome(snapshot: LiveSnapshot, onOpen: (LivePage) -> Unit) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 FigIcon(
-                    if (row.direction == "IN") R.drawable.fig_cash_arrow else R.drawable.fig_tx_user,
+                    if (row.direction == "IN") R.drawable.fig_cash_arrow else R.drawable.fig_utensils,
                     24.dp,
                 )
                 Column {

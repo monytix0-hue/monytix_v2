@@ -123,6 +123,7 @@ export const transactionsRoutes: FastifyPluginAsync<TransactionsRouteOptions> = 
       categoryId: choice.categoryId,
       applyToPast: choice.applyToPast,
       matchScope: choice.matchScope,
+      subcategoryId: choice.subcategoryId,
     });
     if (result.outcome === "missing") {
       return reply.status(404).send({ error: "not_found" });
@@ -140,7 +141,7 @@ export const transactionsRoutes: FastifyPluginAsync<TransactionsRouteOptions> = 
   });
 };
 
-function readCategoryBody(body: unknown): { categoryId: string; applyToPast: boolean; matchScope: CategoryMatchScope } | null {
+function readCategoryBody(body: unknown): { categoryId: string; subcategoryId: string | null; applyToPast: boolean; matchScope: CategoryMatchScope } | null {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return null;
   }
@@ -155,8 +156,16 @@ function readCategoryBody(body: unknown): { categoryId: string; applyToPast: boo
   if (scope !== "EXACT_MERCHANT" && scope !== "RAW_TOKEN") {
     return null;
   }
+  if (record.subcategory_id !== undefined && record.subcategory_id !== null && typeof record.subcategory_id !== "string") {
+    return null;
+  }
+  const subcategoryId = typeof record.subcategory_id === "string" ? record.subcategory_id.trim() : null;
+  if (record.subcategory_id !== undefined && record.subcategory_id !== null && !subcategoryId) {
+    return null;
+  }
   return {
     categoryId: record.category_id.trim(),
+    subcategoryId,
     applyToPast: record.apply_to_past === true,
     matchScope: scope,
   };

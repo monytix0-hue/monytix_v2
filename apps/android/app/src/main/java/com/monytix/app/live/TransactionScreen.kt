@@ -271,7 +271,28 @@ fun TransactionScreen(
             )
         }
         selected?.let { row ->
-            TransactionDetail(row, credit, onBack = { selected = null })
+            TransactionDetail(
+                row,
+                credit,
+                categories,
+                onBack = { selected = null },
+                onSave = { categoryCode, subcategoryCode ->
+                    val ok = saveCategory(api, token, row.id, categoryCode, subcategoryCode)
+                    if (ok) {
+                        val page = loadPage(api, token, direction, from, to, category, subcategory, null)
+                        items = page.items
+                        nextCursor = page.nextCursor
+                        known = page.known
+                        val chosen = categories.firstOrNull { it.code == categoryCode }
+                        val fresh = page.items.firstOrNull { it.id == row.id }
+                        selected = fresh ?: row.copy(
+                            categoryName = chosen?.name,
+                            subcategoryName = chosen?.subcategories?.firstOrNull { it.code == subcategoryCode }?.name,
+                        )
+                    }
+                    ok
+                },
+            )
         }
     }
 }
@@ -331,8 +352,19 @@ private fun DateSheet(onDismiss: () -> Unit, onApply: (String?, String?, String)
 }
 
 @Composable
-private fun TransactionDetail(row: LedgerTransaction, credit: androidx.compose.ui.graphics.Color, onBack: () -> Unit) {
+private fun TransactionDetail(
+    row: LedgerTransaction,
+    credit: androidx.compose.ui.graphics.Color,
+    categories: List<CategoryChoice>,
+    onBack: () -> Unit,
+    onSave: suspend (String, String?) -> Boolean,
+) {
     val theme = LocalPersonalTheme.current
+    val scope = rememberCoroutineScope()
+    var picking by remember { mutableStateOf(false) }
+    var chosen by remember { mutableStateOf<CategoryChoice?>(null) }
+    var saving by remember { mutableStateOf(false) }
+    Box(Modifier.fillMaxSize()) {
     Column(
         Modifier
             .fillMaxSize()
@@ -367,7 +399,10 @@ private fun TransactionDetail(row: LedgerTransaction, credit: androidx.compose.u
         ) {
             Fact("Date", headingDate(row.transactionDate ?: ""))
             Fact("Type", if (row.direction == "IN") "Credit" else if (row.direction == "OUT") "Debit" else "Not recorded")
-            Fact("Category", recorded(row.categoryName))
+            Fact("Category", recorded(row.categoryName), enabled = categories.isNotEmpty() && !saving) {
+                chosen = null
+                picking = true
+            }
             Fact("Subcategory", recorded(row.subcategoryName))
             Fact("Account", recorded(row.accountName))
             if (!row.weightName.isNullOrBlank()) {
@@ -376,14 +411,93 @@ private fun TransactionDetail(row: LedgerTransaction, credit: androidx.compose.u
             Fact("Reference", recorded(row.reference))
         }
     }
+    if (picking) {
+        CategorySheet(
+            categories = categories,
+            chosen = chosen,
+            onChooseCategory = { category ->
+                if (category.subcategories.isEmpty()) {
+                    scope.launch {
+                        saving = true
+                        val ok = onSave(category.code, null)
+                        saving = false
+                        if (ok) picking = false
+                    }
+                } else {
+                    chosen = category
+                }
+            },
+            onChooseSubcategory = { category, sub ->
+                scope.launch {
+                    saving = true
+                    val ok = onSave(category.code, sub.code)
+                    saving = false
+                    if (ok) picking = false
+                }
+            },
+            onBack = { chosen = null },
+            onDismiss = { picking = false },
+        )
+    }
+    }
 }
 
 @Composable
-private fun Fact(label: String, value: String) {
+private fun CategorySheet(
+    categories: List<CategoryChoice>,
+    chosen: CategoryChoice?,
+    onChooseCategory: (CategoryChoice) -> Unit,
+    onChooseSubcategory: (CategoryChoice, FilterChoice) -> Unit,
+    onBack: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val theme = LocalPersonalTheme.current
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(theme.palette.backdrop.copy(alpha = 0.72f))
+            .clickable(onClick = onDismiss),
+    ) {
+        Column(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(topStart = PersonalRadius.sheet, topEnd = PersonalRadius.sheet))
+                .background(theme.palette.sheet)
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
+                .navigationBarsPadding()
+                .verticalScroll(rememberScrollState())
+                .padding(PersonalSpace.s20),
+            verticalArrangement = Arrangement.spacedBy(PersonalSpace.s12),
+        ) {
+            Text(
+                chosen?.name ?: "Category",
+                color = theme.palette.textPrimary,
+                fontFamily = theme.fontFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 18.sp,
+            )
+            if (chosen != null) {
+                LedgerChip("Categories", false, onBack)
+                chosen.subcategories.forEach { sub ->
+                    LedgerChip(sub.name, false) { onChooseSubcategory(chosen, sub) }
+                }
+            } else {
+                categories.forEach { category ->
+                    LedgerChip(category.name, false) { onChooseCategory(category) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun Fact(label: String, value: String, enabled: Boolean = true, onClick: (() -> Unit)? = null) {
     val theme = LocalPersonalTheme.current
     Row(
         Modifier
             .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable(enabled = enabled, onClick = onClick) else Modifier)
             .padding(horizontal = PersonalSpace.s16, vertical = PersonalSpace.s12),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
@@ -503,6 +617,19 @@ private fun pickDate(context: android.content.Context, initial: LocalDate, onPic
         initial.monthValue - 1,
         initial.dayOfMonth,
     ).show()
+}
+
+private suspend fun saveCategory(
+    api: MonytixApi,
+    token: suspend (Boolean) -> String?,
+    id: String,
+    categoryCode: String,
+    subcategoryCode: String?,
+): Boolean {
+    val subcategory = if (subcategoryCode == null) "" else ""","subcategory_id":"$subcategoryCode""""
+    val body = """{"category_id":"$categoryCode"$subcategory,"apply_to_past":false,"match_scope":"EXACT_MERCHANT"}"""
+    val result = api.submit("PATCH", "/v1/transactions/$id/category", body, java.util.UUID.randomUUID().toString(), token)
+    return result.status in 200..299
 }
 
 private suspend fun loadPage(

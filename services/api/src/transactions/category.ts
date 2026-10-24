@@ -9,6 +9,7 @@ export type CategoryChoiceInput = {
   categoryId: string;
   applyToPast: boolean;
   matchScope: CategoryMatchScope;
+  subcategoryId: string | null;
 };
 
 export type CategoryChoiceBody = {
@@ -32,8 +33,16 @@ export function createCategoryChoiceStore(databaseUrl: string): CategoryChoiceSt
   return {
     async set(input) {
       const result = await pool.query<{ result: CategoryChoiceResult }>(
-        "SELECT ops.set_transaction_category($1::uuid, $2::uuid, $3::uuid, $4, $5, $6) AS result",
-        [input.actorId, input.ownerId, input.logicalTransactionId, input.categoryId, input.applyToPast, input.matchScope],
+        "SELECT ops.set_transaction_category($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7) AS result",
+        [
+          input.actorId,
+          input.ownerId,
+          input.logicalTransactionId,
+          input.categoryId,
+          input.applyToPast,
+          input.matchScope,
+          input.subcategoryId,
+        ],
       );
       return result.rows[0]?.result ?? { outcome: "invalid" };
     },

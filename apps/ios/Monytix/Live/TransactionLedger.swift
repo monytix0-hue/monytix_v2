@@ -12,6 +12,22 @@ struct LedgerTransaction: Identifiable, Equatable {
     let accountName: String?
     let weightName: String?
     let reference: String?
+
+    func withLabels(categoryName: String?, subcategoryName: String?, weightName: String?) -> LedgerTransaction {
+        LedgerTransaction(
+            id: id,
+            amount: amount,
+            currency: currency,
+            direction: direction,
+            transactionDate: transactionDate,
+            description: description,
+            categoryName: categoryName,
+            subcategoryName: subcategoryName,
+            accountName: accountName,
+            weightName: weightName,
+            reference: reference
+        )
+    }
 }
 
 struct TransactionChoice: Identifiable, Equatable {
@@ -82,7 +98,15 @@ struct TransactionLedger: View {
             .padding(.horizontal, PersonalSpace.s20)
             .padding(.top, PersonalSpace.s16)
             if let selected {
-                TransactionDetail(row: selected, creditColor: creditColor, onBack: { self.selected = nil })
+                TransactionDetail(
+                    row: selected,
+                    categories: categories,
+                    creditColor: creditColor,
+                    onBack: { self.selected = nil },
+                    onSave: { categoryCode, subcategoryCode in
+                        await saveCategory(id: selected.id, category: categoryCode, subcategory: subcategoryCode)
+                    }
+                )
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -210,25 +234,28 @@ struct TransactionLedger: View {
 
     private func rowCard(_ row: LedgerTransaction) -> some View {
         card {
-            HStack(spacing: PersonalSpace.s12) {
+            HStack(alignment: .top, spacing: PersonalSpace.s12) {
                 FigIcon(name: icon(row.direction), size: 28)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(row.description ?? "Transaction").personalText(.primary, size: 16, weight: .bold)
+                    Text(row.description ?? "Transaction")
+                        .personalText(.primary, size: 16, weight: .bold)
+                        .fixedSize(horizontal: false, vertical: true)
                     if let category = row.categoryName, !category.isEmpty {
-                        Text(category).personalText(.secondary, size: 13)
+                        Text(category).personalText(.secondary, size: 13).fixedSize(horizontal: false, vertical: true)
                     }
                     if let account = row.accountName, !account.isEmpty {
-                        Text(account).personalText(.secondary, size: 13)
+                        Text(account).personalText(.secondary, size: 13).fixedSize(horizontal: false, vertical: true)
                     }
                     if let weight = row.weightName, !weight.isEmpty {
-                        Text(weight).personalText(.secondary, size: 13)
+                        Text(weight).personalText(.secondary, size: 13).fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                Spacer(minLength: PersonalSpace.s8)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 Text(money(row))
                     .font(.custom("Inter-SemiBold", size: 15))
                     .foregroundStyle(row.direction == "IN" ? creditColor : palette.textPrimary)
                     .multilineTextAlignment(.trailing)
+                    .fixedSize(horizontal: true, vertical: false)
             }
         }
     }
@@ -303,6 +330,44 @@ struct TransactionLedger: View {
         to = end
         dateLabel = label
         showDates = false
+    }
+
+    private func saveCategory(id: String, category categoryCode: String, subcategory subcategoryCode: String?) async -> Bool {
+        var payload: [String: Any] = [
+            "category_id": categoryCode,
+            "apply_to_past": false,
+            "match_scope": "EXACT_MERCHANT",
+        ]
+        if let subcategoryCode {
+            payload["subcategory_id"] = subcategoryCode
+        }
+        guard let body = try? JSONSerialization.data(withJSONObject: payload) else { return false }
+        let result = await api.submit(
+            method: "PATCH",
+            path: "/v1/transactions/\(id)/category",
+            body: body,
+            idempotencyKey: UUID().uuidString,
+            token: token
+        )
+        guard (200..<300).contains(result.status) else { return false }
+        let chosen = categories.first { $0.code == categoryCode }
+        let categoryName = chosen?.name
+        let subcategoryName = chosen?.subcategories.first { $0.code == subcategoryCode }?.name
+        if let data = await api.getJSON(path: path(cursor: nil), token: token),
+           let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            items = parseItems(root)
+            nextCursor = root["nextCursor"] as? String
+            known = true
+        }
+        if let fresh = items.first(where: { $0.id == id }) {
+            selected = fresh
+        } else if let current = selected, current.id == id {
+            selected = current.withLabels(categoryName: categoryName, subcategoryName: subcategoryName, weightName: current.weightName)
+        }
+        if let index = items.firstIndex(where: { $0.id == id }), let selected, selected.id == id {
+            items[index] = selected
+        }
+        return true
     }
 
     private func reload() async {
@@ -445,9 +510,14 @@ struct TransactionLedger: View {
 
 private struct TransactionDetail: View {
     var row: LedgerTransaction
+    var categories: [TransactionCategory]
     var creditColor: Color
     var onBack: () -> Void
+    var onSave: (String, String?) async -> Bool
     @Environment(\.colorScheme) private var colorScheme
+    @State private var picking = false
+    @State private var chosen: TransactionCategory?
+    @State private var saving = false
 
     private var palette: PersonalPalette { colorScheme == .dark ? PersonalTokens.dark : PersonalTokens.light }
 
@@ -473,7 +543,10 @@ private struct TransactionDetail: View {
                             .font(.custom("Inter-Bold", size: 28))
                             .foregroundStyle(row.direction == "IN" ? creditColor : palette.textPrimary)
                     }
-                    Text(row.description ?? "Transaction").personalText(.primary, size: 18, weight: .bold)
+                    Text(row.description ?? "Transaction")
+                        .personalText(.primary, size: 18, weight: .bold)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(PersonalSpace.s16)
@@ -485,7 +558,15 @@ private struct TransactionDetail: View {
                 VStack(spacing: 0) {
                     fact("Date", displayDate)
                     fact("Type", row.direction == "IN" ? "Credit" : (row.direction == "OUT" ? "Debit" : "Not recorded"))
-                    fact("Category", recorded(row.categoryName))
+                    Button {
+                        chosen = nil
+                        picking = true
+                    } label: {
+                        fact("Category", recorded(row.categoryName))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(categories.isEmpty || saving)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     fact("Subcategory", recorded(row.subcategoryName))
                     fact("Account", recorded(row.accountName))
                     if let weight = row.weightName, !weight.isEmpty {
@@ -505,6 +586,51 @@ private struct TransactionDetail: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(palette.canvas)
+        .sheet(isPresented: $picking) { categorySheet }
+    }
+
+    private var categorySheet: some View {
+        NavigationStack {
+            List {
+                if let chosen {
+                    if chosen.subcategories.isEmpty {
+                        Button(chosen.name) { Task { await commit(chosen.code, nil) } }
+                    } else {
+                        ForEach(chosen.subcategories) { sub in
+                            Button(sub.name) { Task { await commit(chosen.code, sub.code) } }
+                        }
+                    }
+                } else {
+                    ForEach(categories) { category in
+                        Button(category.name) {
+                            if category.subcategories.isEmpty {
+                                Task { await commit(category.code, nil) }
+                            } else {
+                                self.chosen = category
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle(chosen?.name ?? "Category")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if chosen != nil {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("Categories") { chosen = nil }
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func commit(_ category: String, _ subcategory: String?) async {
+        saving = true
+        defer { saving = false }
+        if await onSave(category, subcategory) {
+            picking = false
+        }
     }
 
     private var amount: String {
@@ -540,12 +666,16 @@ private struct TransactionDetail: View {
     }
 
     private func fact(_ label: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(label).personalText(.secondary, size: 15)
-            Spacer(minLength: PersonalSpace.s12)
+        HStack(alignment: .firstTextBaseline, spacing: PersonalSpace.s12) {
+            Text(label)
+                .personalText(.secondary, size: 15)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
             Text(value)
                 .personalText(.primary, size: 15, weight: .bold)
                 .multilineTextAlignment(.trailing)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .padding(.horizontal, PersonalSpace.s16)
         .padding(.vertical, PersonalSpace.s12)

@@ -300,4 +300,24 @@ def resolve_taxonomy(merchant: str, raw: str = "") -> tuple[str, str | None]:
         return "MOBILITY_TRANSPORT", "TRANSIT_FUEL"
     if any(word in raw_upper for word in ("HOSPITAL", "CLINIC", "PHARMACY", "LABS")):
         return "HEALTH_MEDICAL", "PHARMACY"
+    blob = f"{token} {raw_upper}"
+    if re.search(r"\b(?:COFFEE|CAFE|CAFÉ|ESPRESSO|ROASTERS|BAKERY|BAKEHOUSE|TEA|CHAI|TAPRI|LOUNGE)\b", blob):
+        return "FOOD_DINING", "COFFEE_AND_CAFES"
+    if re.search(
+        r"\b(?:RESTAURANT|RESTRO|DINER|KITCHEN|DHABA|BHOJANALAYA|BISTRO|TIFFIN|EATERY|GRILL|BBQ|PIZZERIA|BURGER|BIRYANI|SHAWARMA|SWEETS|MITHAI|CHAAT|CATERERS|WINES|WINE|LIQUOR|BAR|PUB|BREWERY|BEER|SPIRITS|THEKA|AHATA|PAAN|TOBACCO|SMOKE|CIGAR|BEEDI|MESS)\b|\bPAN\s+(?:STORE|SHOP)\b|\b(?:STORE|SHOP)\s+PAN\b",
+        blob,
+    ):
+        return "FOOD_DINING", "RESTAURANT_DINE_IN"
+    if re.search(r"\b(?:SUPERMARKET|HYPERMARKET|GROCERS|GROCERY|PROVISIONS|KIRANA|VEGETABLES|FRUITS|DAIRY|MILK|DOODH|SABJI)\b", blob):
+        return "FOOD_DINING", "GROCERIES_SUPERMARKET"
+    if re.search(r"\b(?:PETROL|DIESEL|FUEL|CNG)\b", blob):
+        return "MOBILITY_TRANSPORT", "TRANSIT_FUEL"
+    if re.search(r"\b(?:PHARMACY|CHEMIST|MEDICALS|CLINIC|HOSPITAL|DIAGNOSTICS|PATHOLOGY|LABS)\b", blob):
+        return "HEALTH_MEDICAL", "PHARMACY"
+    if re.search(r"\b(?:TAXI|CABS?)\b", blob) or (
+        re.search(r"\bAUTO\b", blob) and not re.search(r"\bAUTO\s+DEBIT\b", blob)
+    ):
+        return "MOBILITY_TRANSPORT", "TRANSIT_CABS"
+    if re.search(r"\bRENT\b", blob):
+        return "HOUSING_HOME", "RENT"
     return "OTHER_MERCHANT", None

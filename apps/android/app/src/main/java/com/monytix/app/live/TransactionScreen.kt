@@ -64,6 +64,7 @@ private data class LedgerTransaction(
     val categoryName: String?,
     val subcategoryName: String?,
     val accountName: String?,
+    val weightName: String?,
     val reference: String?,
 )
 
@@ -214,6 +215,9 @@ fun TransactionScreen(
                                     }
                                     if (!row.accountName.isNullOrBlank()) {
                                         Text(row.accountName, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+                                    }
+                                    if (!row.weightName.isNullOrBlank()) {
+                                        Text(row.weightName, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
                                     }
                                 }
                                 Spacer(Modifier.width(PersonalSpace.s8))
@@ -366,6 +370,9 @@ private fun TransactionDetail(row: LedgerTransaction, credit: androidx.compose.u
             Fact("Category", recorded(row.categoryName))
             Fact("Subcategory", recorded(row.subcategoryName))
             Fact("Account", recorded(row.accountName))
+            if (!row.weightName.isNullOrBlank()) {
+                Fact("Weight", row.weightName)
+            }
             Fact("Reference", recorded(row.reference))
         }
     }
@@ -541,6 +548,7 @@ private fun parsePage(json: String): LedgerPage {
                         categoryName = row.optionalText("categoryName"),
                         subcategoryName = row.optionalText("subcategoryName"),
                         accountName = row.optionalText("accountName"),
+                        weightName = row.optionalText("weightName"),
                         reference = row.optionalText("reference"),
                     ),
                 )

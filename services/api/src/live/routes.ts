@@ -65,6 +65,7 @@ async function recorded(ledger: LedgerRead, ownerId: string, limit: number) {
       transactionDate: item.transactionDate,
       description: displayTransactionTitle(item.description),
       accountName: item.accountName,
+      weightName: item.weightName,
     })),
   };
 }

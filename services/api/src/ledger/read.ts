@@ -49,6 +49,7 @@ export type TransactionItem = {
   subcategoryCode: string | null;
   subcategoryName: string | null;
   accountName: string | null;
+  weightName: string | null;
   reference: string | null;
   duplicateOutcome: string;
   changeProvenance: string;
@@ -140,6 +141,7 @@ type Row = {
   category_name: string | null;
   subcategory_name: string | null;
   account_display_name: string | null;
+  weight_name: string | null;
   source_reference: string | null;
   taxonomy_version: string | null;
   purpose_status: string | null;
@@ -234,6 +236,7 @@ const listColumns = `
   cat.display_name AS category_name,
   sub.display_name AS subcategory_name,
   fa.account_display_name,
+  wm.name AS weight_name,
   cv.source_reference,
   c.taxonomy_version,
   p.purpose_status,
@@ -259,6 +262,8 @@ FROM (
 ) cv
 ${interpretationJoins}
 LEFT JOIN core.financial_account fa ON fa.financial_account_id = cv.financial_account_id
+LEFT JOIN core.movement_weight mw ON mw.logical_transaction_id = cv.logical_transaction_id
+LEFT JOIN human_context.weight_master wm ON wm.code = mw.primary_weight_code
 LEFT JOIN ref.taxonomy_category cat
   ON cat.taxonomy_version = 'F10E-v1.2' AND cat.category_code = cv.chosen_category
 LEFT JOIN ref.taxonomy_subcategory sub
@@ -289,6 +294,8 @@ FROM (
 ) cv
 ${interpretationJoins}
 LEFT JOIN core.financial_account fa ON fa.financial_account_id = cv.financial_account_id
+LEFT JOIN core.movement_weight mw ON mw.logical_transaction_id = cv.logical_transaction_id
+LEFT JOIN human_context.weight_master wm ON wm.code = mw.primary_weight_code
 LEFT JOIN ref.taxonomy_category cat
   ON cat.taxonomy_version = 'F10E-v1.2' AND cat.category_code = cv.chosen_category
 LEFT JOIN ref.taxonomy_subcategory sub
@@ -343,6 +350,7 @@ function mapItem(row: Row): TransactionItem {
     subcategoryCode: row.subcategory_code,
     subcategoryName: row.subcategory_name,
     accountName: row.account_display_name,
+    weightName: row.weight_name,
     reference: row.source_reference,
     duplicateOutcome: row.duplicate_outcome,
     changeProvenance: row.change_provenance,

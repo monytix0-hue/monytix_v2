@@ -10,6 +10,7 @@ struct LedgerTransaction: Identifiable, Equatable {
     let categoryName: String?
     let subcategoryName: String?
     let accountName: String?
+    let weightName: String?
     let reference: String?
 }
 
@@ -219,6 +220,9 @@ struct TransactionLedger: View {
                     if let account = row.accountName, !account.isEmpty {
                         Text(account).personalText(.secondary, size: 13)
                     }
+                    if let weight = row.weightName, !weight.isEmpty {
+                        Text(weight).personalText(.secondary, size: 13)
+                    }
                 }
                 Spacer(minLength: PersonalSpace.s8)
                 Text(money(row))
@@ -377,6 +381,7 @@ struct TransactionLedger: View {
                 categoryName: row["categoryName"] as? String,
                 subcategoryName: row["subcategoryName"] as? String,
                 accountName: row["accountName"] as? String,
+                weightName: row["weightName"] as? String,
                 reference: row["reference"] as? String
             )
         }
@@ -483,6 +488,9 @@ private struct TransactionDetail: View {
                     fact("Category", recorded(row.categoryName))
                     fact("Subcategory", recorded(row.subcategoryName))
                     fact("Account", recorded(row.accountName))
+                    if let weight = row.weightName, !weight.isEmpty {
+                        fact("Weight", weight)
+                    }
                     fact("Reference", recorded(row.reference))
                 }
                 .background(palette.surface, in: RoundedRectangle(cornerRadius: PersonalRadius.card, style: .continuous))

@@ -161,6 +161,7 @@ test("GET /v1/ui/live returns recorded money and leaves unpublished projections 
               transactionDate: "2026-10-02",
               description: "Recorded row",
               accountName: "HDFC Bank credit card ending in 1044",
+              weightName: "Opportunity",
               duplicateOutcome: "UNIQUE",
               changeProvenance: "SOURCE",
               financialEvent: null,
@@ -186,7 +187,7 @@ test("GET /v1/ui/live returns recorded money and leaves unpublished projections 
     contract: string;
     recordedFlow: { available: boolean; currencies: Array<{ inflow: string }> };
     summary: { available_balance: { available: boolean; amount?: string; currency?: string } };
-    transactions_preview: Array<{ id: string; amount: string | null; description: string | null; accountName: string | null }>;
+    transactions_preview: Array<{ id: string; amount: string | null; description: string | null; accountName: string | null; weightName: string | null }>;
     today_decisions: { available: boolean };
     weight_summary: { available: boolean };
     reflection_summary: { available: boolean };
@@ -201,6 +202,7 @@ test("GET /v1/ui/live returns recorded money and leaves unpublished projections 
   assert.equal(body.transactions_preview.length, 1);
   assert.equal(body.transactions_preview[0].id, "lt-1");
   assert.equal(body.transactions_preview[0].accountName, "HDFC Bank credit card ending in 1044");
+  assert.equal(body.transactions_preview[0].weightName, "Opportunity");
   assert.equal(body.today_decisions.available, false);
   assert.equal(body.weight_summary.available, false);
   assert.equal(body.reflection_summary.available, false);

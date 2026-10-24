@@ -21,6 +21,7 @@ data class RecordedPreview(
     val transactionDate: String?,
     val description: String?,
     val accountName: String?,
+    val weightName: String?,
 )
 
 data class ActiveMission(
@@ -90,6 +91,7 @@ data class LiveSnapshot(
                                     transactionDate = row.optionalText("transactionDate"),
                                     description = row.optionalText("description"),
                                     accountName = row.optionalText("accountName"),
+                                    weightName = row.optionalText("weightName"),
                                 ),
                             )
                         }

@@ -153,6 +153,14 @@ private fun Welcome(snapshot: LiveSnapshot, onOpen: (LivePage) -> Unit) {
                             fontSize = 13.sp,
                         )
                     }
+                    if (!row.weightName.isNullOrBlank()) {
+                        Text(
+                            row.weightName,
+                            color = theme.palette.textSecondary,
+                            fontFamily = theme.fontFamily,
+                            fontSize = 13.sp,
+                        )
+                    }
                 }
             }
         }

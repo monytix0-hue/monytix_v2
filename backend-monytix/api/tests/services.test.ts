@@ -507,6 +507,10 @@ test("a promote row enqueues decision ranking and the ui lists the candidate", a
   assert.equal(listed.json().meta.api_version, "v1.2");
   assert.equal(listed.json().data.empty_state, false);
   assert.equal(listed.json().data.heaviest_decision.decision_family_code, "D10");
+  assert.equal(listed.json().contract, "ui-decisions-v0.1");
+  assert.equal(listed.json().heaviest.available, true);
+  assert.equal(listed.json().heaviest.state, "need_you");
+  assert.equal(listed.json().heaviest.title, "Expense Spike Review");
 });
 
 test("accepting a decision spawns a mission; snooze and reminder update expiry", async () => {
@@ -542,6 +546,24 @@ test("accepting a decision spawns a mission; snooze and reminder update expiry",
     payload: { action: "SET_REMINDER" },
   });
   assert.equal(missingRemind.statusCode, 400);
+
+  const weights = await app.inject({
+    method: "GET",
+    url: "/v1/ui/decisions/dec-1/weights",
+    headers: ownerHeaders,
+  });
+  assert.equal(weights.statusCode, 200);
+  assert.equal(weights.json().decision.question, "Expense Spike Review");
+  assert.equal(weights.json().weights.length, 4);
+  assert.equal(weights.json().solutions.length, 3);
+  assert.match(weights.json().transparency, /product is available/);
+
+  const missingWeights = await app.inject({
+    method: "GET",
+    url: "/v1/ui/decisions/missing/weights",
+    headers: ownerHeaders,
+  });
+  assert.equal(missingWeights.statusCode, 404);
 
   const accept = await app.inject({
     method: "POST",
@@ -612,6 +634,9 @@ test("accepting a decision spawns a mission; snooze and reminder update expiry",
     ),
     false,
   );
+  const phoneRows = hiddenWhileSnoozed.json().decisions as { id: string; state: string }[];
+  assert.equal(phoneRows.some((item) => item.id === "dec-2" && item.state === "upcoming"), true);
+  assert.equal(phoneRows.some((item) => item.id === "dec-1" && item.state === "made"), true);
 
   const remindAt = "2026-11-01T10:00:00.000Z";
   const remind = await app.inject({

@@ -26,6 +26,7 @@ import {
   journeyReadModel,
   metaEnvelope,
   missionsReadModel,
+  phoneDecisions,
   rewardsReadModel,
 } from "./ui-read-models.js";
 import type { IntelligenceClient } from "./worker.js";
@@ -676,7 +677,15 @@ export function createApp(deps: BuildDeps): FastifyInstance {
   app.get("/v1/ui/decisions", async (request) => {
     const ownerId = requireOwner(request, request.server);
     const items = await deps.finance.listDecisions(ownerId);
-    return { meta: metaEnvelope(request.id), data: decisionsReadModel(items) };
+    return { meta: metaEnvelope(request.id), data: decisionsReadModel(items), ...phoneDecisions(items) };
+  });
+
+  app.get("/v1/ui/decisions/:decisionId/weights", async (request, reply) => {
+    const ownerId = requireOwner(request, reply);
+    const decisionId = (request.params as { decisionId: string }).decisionId;
+    const screen = await deps.finance.decisionScreen(ownerId, decisionId);
+    if (!screen) return reply.status(404).send({ error: "not_found" });
+    return screen;
   });
 
   app.get("/v1/ui/missions", async (request) => {

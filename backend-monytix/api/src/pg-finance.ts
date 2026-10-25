@@ -389,12 +389,22 @@ export class PgFinance implements FinanceWriter {
          FROM action.decision d
          JOIN ref.decision_family f ON f.decision_family_version_id = d.decision_family_version_id
          LEFT JOIN action.decision_evaluation e ON e.decision_evaluation_id = d.source_evaluation_id
-         WHERE d.owner_id = $1 AND d.state IN ('CANDIDATE', 'PRESENTED')
-           AND (d.expires_at IS NULL OR d.expires_at <= clock_timestamp())
+         WHERE d.owner_id = $1
+           AND d.state IN ('CANDIDATE', 'PRESENTED', 'CONSIDERING', 'SELECTED', 'EXECUTED')
          ORDER BY e.decision_score DESC NULLS LAST, d.current_rank ASC NULLS LAST, d.created_at DESC`,
         [ownerId],
       );
       return result.rows;
+    });
+  }
+
+  async decisionScreen(ownerId: string, decisionId: string): Promise<Record<string, unknown> | null> {
+    return this.withOwner(ownerId, async (client) => {
+      const result = await client.query<{ screen: Record<string, unknown> | null }>(
+        `SELECT ops.phone_decision_screen($1::uuid, $2::uuid) AS screen`,
+        [ownerId, decisionId],
+      );
+      return result.rows[0]?.screen ?? null;
     });
   }
 

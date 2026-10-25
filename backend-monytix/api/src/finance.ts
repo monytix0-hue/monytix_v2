@@ -19,6 +19,7 @@ import type { DecisionMode, FeedbackAction, HumanContextResult, PendingFact, Wei
 import { mentionsOtherAccount } from "./human-context.js";
 import type { Normalized } from "./types.js";
 import { DOMAIN_TABLE } from "./types.js";
+import { decisionScreenFromRow } from "./ui-read-models.js";
 
 export type Override = { category_id: string; subcategory_id: string | null };
 
@@ -36,6 +37,7 @@ export type FinanceWriter = {
   decisionEvalContext(transactionId: string): Promise<DecisionEvalContext | null>;
   applyDecisionEvaluation(input: ApplyDecisionInput): Promise<{ status: "DECISION_COMMITTED" }>;
   listDecisions(ownerId: string): Promise<DecisionRow[]>;
+  decisionScreen(ownerId: string, decisionId: string): Promise<Record<string, unknown> | null>;
   applyDecisionAction(input: DecisionActionInput): Promise<DecisionActionResult>;
   sweepExpiredSnoozes(ownerId: string | null): Promise<{ swept: number }>;
   listMissions(ownerId: string): Promise<MissionRow[]>;
@@ -304,15 +306,17 @@ export class MemoryFinance implements FinanceWriter {
   }
 
   async listDecisions(ownerId: string): Promise<DecisionRow[]> {
-    const now = Date.now();
     return this.decisions
       .filter((item) => {
         if (item.owner_id !== ownerId) return false;
-        if (item.state !== "CANDIDATE" && item.state !== "PRESENTED") return false;
-        if (item.expires_at && Date.parse(item.expires_at) > now) return false;
-        return true;
+        return item.state === "CANDIDATE" || item.state === "PRESENTED" || item.state === "CONSIDERING" || item.state === "SELECTED" || item.state === "EXECUTED";
       })
       .sort((left, right) => (right.decision_score ?? 0) - (left.decision_score ?? 0) || (left.current_rank ?? 99) - (right.current_rank ?? 99));
+  }
+
+  async decisionScreen(ownerId: string, decisionId: string): Promise<Record<string, unknown> | null> {
+    const row = this.decisions.find((item) => item.owner_id === ownerId && item.decision_id === decisionId);
+    return row ? decisionScreenFromRow(row) : null;
   }
 
   async sweepExpiredSnoozes(ownerId: string | null): Promise<{ swept: number }> {

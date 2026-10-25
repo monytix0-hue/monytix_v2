@@ -199,7 +199,7 @@ export async function buildApp(options: BuildOptions = {}): Promise<FastifyInsta
       scanner: options.importScanner,
       databaseUrl: options.databaseUrl,
     });
-    await app.register(decisionsRoutes);
+    await app.register(decisionsRoutes, { databaseUrl: options.databaseUrl });
     await app.register(missionsRoutes);
     await app.register(mileRoutes);
   }

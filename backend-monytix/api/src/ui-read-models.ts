@@ -23,9 +23,110 @@ export function metaEnvelope(requestId: string, apiVersion = "v1.2") {
   };
 }
 
+function phoneState(item: DecisionRow): "need_you" | "upcoming" | "made" {
+  if (item.state === "SELECTED" || item.state === "EXECUTED") return "made";
+  if (item.expires_at && Date.parse(item.expires_at) > Date.now()) return "upcoming";
+  return "need_you";
+}
+
+function rupees(value: unknown): string | null {
+  const amount = typeof value === "number" ? value : typeof value === "string" && value.trim() !== "" ? Number(value) : NaN;
+  if (!Number.isFinite(amount)) return null;
+  return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(amount);
+}
+
+export function phoneDecisions(items: DecisionRow[]) {
+  const cards = items.map((item) => {
+    const summary = item.trigger_summary ?? {};
+    const choices = Array.isArray(item.option_set) ? item.option_set : [];
+    const state = phoneState(item);
+    const names = choices
+      .map((choice) => (typeof choice.name === "string" ? choice.name : ""))
+      .filter((name) => name.length > 0);
+    return {
+      id: item.decision_id,
+      title: item.title,
+      question: typeof summary.question === "string" ? summary.question : item.title,
+      context: typeof summary.context === "string" ? summary.context : null,
+      amount: rupees(summary.amount),
+      timing: state === "upcoming" ? "Saved for later" : state === "made" ? "Marked" : "Needs a choice",
+      state,
+      badge: state === "upcoming" ? "UPCOMING" : state === "made" ? "MARKED" : "NEEDS A CHOICE",
+      summary: names.length > 0 ? names.join(" · ") : null,
+      weight_count: choices.length,
+      choices,
+    };
+  });
+  const featured = cards.find((card) => card.state === "need_you") ?? null;
+  return {
+    contract: "ui-decisions-v0.1" as const,
+    empty_state: cards.length === 0,
+    active_decision_count: cards.filter((card) => card.state === "need_you").length,
+    heaviest: featured ? { available: true as const, ...featured } : { available: false as const },
+    decisions: cards.filter((card) => card.id !== featured?.id),
+  };
+}
+
+const SCREEN_WEIGHTS = [
+  { name: "Resilience", meaning: "Protection you can count on later" },
+  { name: "Risk", meaning: "How exposed this choice leaves you" },
+  { name: "Comfort", meaning: "Money you can still use now" },
+  { name: "Opportunity", meaning: "Room to grow what you set aside" },
+];
+
+export function decisionScreenFromRow(row: DecisionRow) {
+  const summary = row.trigger_summary ?? {};
+  const choices = (Array.isArray(row.option_set) ? row.option_set : []).map((choice, index) => ({
+    id: typeof choice.id === "string" ? choice.id : `choice-${index + 1}`,
+    name: typeof choice.name === "string" ? choice.name : typeof choice.label === "string" ? choice.label : "Choice",
+    approach: typeof choice.approach === "string" ? choice.approach : null,
+    amount: typeof choice.amount === "string" ? choice.amount : null,
+    meters: Array.isArray(choice.meters) ? choice.meters : [],
+    outcomes: Array.isArray(choice.outcomes) ? choice.outcomes : [],
+    hint: typeof choice.hint === "string" ? choice.hint : null,
+  }));
+  return {
+    decision: {
+      id: row.decision_id,
+      title: row.title,
+      question: typeof summary.question === "string" ? summary.question : row.title,
+      context: typeof summary.context === "string" ? summary.context : null,
+      mattered: "The weights you marked highest are the ones this choice carries forward.",
+      expected: [
+        "The choice you mark is the one that carries forward",
+        "You can still change your mind before you confirm",
+      ],
+    },
+    tradeoff: {
+      eyebrow: "THE TRADE-OFF",
+      title: "What are you balancing?",
+      description: "Every option moves the balance between money you can use now and protection you build for later.",
+    },
+    choices,
+    weights: SCREEN_WEIGHTS.map((weight) => ({
+      name: weight.name,
+      priority: "MEDIUM",
+      meaning: weight.meaning,
+      importance: 0.45,
+    })),
+    solutions: [
+      { title: "Keep it where it is", tag: "Highest access", detail: "Use an account you already have. No new product is required." },
+      { title: "A short, accessible holding", tag: "Access and some return", detail: "Keeps the money reachable while it sits aside." },
+      { title: "A longer option you can revisit", tag: "Return later", detail: "Only if you want to look again. The decision is already complete." },
+    ],
+    transparency: "These options follow from the decision you already made. Monytix does not create a Decision because a product is available.",
+    optional_note: "Your Decision is still complete. You can return to these options later.",
+  };
+}
+
 export function decisionsReadModel(items: DecisionRow[]) {
   const sorted = [...items].sort((a, b) => (b.decision_score ?? 0) - (a.decision_score ?? 0));
-  const heaviest = sorted[0] ?? null;
+  const open = sorted.filter((item) => {
+    if (item.state === "SELECTED" || item.state === "EXECUTED") return false;
+    if (item.expires_at && Date.parse(item.expires_at) > Date.now()) return false;
+    return true;
+  });
+  const heaviest = open[0] ?? null;
   return {
     awareness_score: items.length === 0 ? 0 : Math.min(100, 60 + items.length * 4),
     awareness_subtext:
@@ -48,7 +149,7 @@ export function decisionsReadModel(items: DecisionRow[]) {
           })),
         }
       : null,
-    upcoming_decisions: sorted.slice(1).map((item) => ({
+    upcoming_decisions: open.slice(1).map((item) => ({
       decision_id: item.decision_id,
       decision_family_code: item.decision_family_code,
       title: item.title || item.decision_family_code,

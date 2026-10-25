@@ -95,6 +95,7 @@ for file in $(find /database/migrations -maxdepth 1 -type f -name '*.sql' | sort
     0049_descriptor_category.sql) code="DESCRIPTOR-CATEGORY" ;;
     0050_pan_store_category.sql) code="PAN-STORE-CATEGORY" ;;
     0051_upi_taxonomy.sql) code="UPI-TAXONOMY" ;;
+    0052_decision_screens.sql) code="DECISION-SCREENS" ;;
     *) code="" ;;
   esac
 

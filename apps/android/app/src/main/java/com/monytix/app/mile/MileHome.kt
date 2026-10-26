@@ -46,8 +46,6 @@ import org.json.JSONObject
 
 enum class MileStep { Outcomes, Outcome, Trace, Report, Lifetime }
 
-private const val Unavailable = "Unavailable"
-
 private data class Family(val name: String, val line: String)
 
 private val families = listOf(
@@ -59,7 +57,9 @@ private val families = listOf(
     Family("Freedom", "More financial flexibility"),
 )
 
-private val homeMix = listOf("Protected", "Debt", "Saved", "Wealth")
+private val homeMix = listOf("Safety", "Debt", "Savings", "Wealth")
+
+private data class MileStat(val label: String, val value: String?)
 
 private data class MileOutcome(
     val id: String,
@@ -68,6 +68,9 @@ private data class MileOutcome(
     val amount: String?,
     val miles: String?,
     val share: String?,
+    val drivers: String?,
+    val recent: String?,
+    val actions: String?,
 )
 
 private data class MileMonth(val label: String, val value: String?)
@@ -88,9 +91,13 @@ private data class MileSummary(
     val lifetimeDistance: String?,
     val lifetimeImpact: String?,
     val lifetimeLine: String?,
+    val reportNumbers: List<MileStat>,
+    val reportEvolution: String?,
+    val lifetimeYears: List<MileStat>,
+    val lifetimeBuilt: List<MileStat>,
 ) {
     companion object {
-        fun empty() = MileSummary(null, null, null, emptyList(), null, null, emptyList(), null, null, null, null, null, null, null, null)
+        fun empty() = MileSummary(null, null, null, emptyList(), null, null, emptyList(), null, null, null, null, null, null, null, null, emptyList(), null, emptyList(), emptyList())
 
         fun parse(json: String?): MileSummary {
             if (json.isNullOrBlank()) return empty()
@@ -117,6 +124,10 @@ private data class MileSummary(
                     lifetimeDistance = text(lifetime, "distance"),
                     lifetimeImpact = text(lifetime, "impact"),
                     lifetimeLine = text(lifetime, "line"),
+                    reportNumbers = stats(report, "numbers"),
+                    reportEvolution = text(report, "evolution"),
+                    lifetimeYears = stats(lifetime, "years"),
+                    lifetimeBuilt = stats(lifetime, "built"),
                 )
             } catch (_: Exception) {
                 empty()
@@ -163,7 +174,19 @@ private fun outcomes(root: JSONObject): List<MileOutcome> {
             val row = rows.optJSONObject(index) ?: continue
             val id = row.optString("id")
             if (id.isBlank()) continue
-            add(MileOutcome(id, text(row, "title"), text(row, "line"), text(row, "amount"), text(row, "miles"), text(row, "share")))
+            add(MileOutcome(id, text(row, "title"), text(row, "line"), text(row, "amount"), text(row, "miles"), text(row, "share"), text(row, "drivers"), text(row, "recent"), text(row, "actions")))
+        }
+    }
+}
+
+private fun stats(obj: JSONObject?, key: String): List<MileStat> {
+    val rows = obj?.optJSONArray(key) ?: return emptyList()
+    return buildList {
+        for (index in 0 until rows.length()) {
+            val row = rows.optJSONObject(index) ?: continue
+            val label = row.optString("label")
+            if (label.isBlank()) continue
+            add(MileStat(label, text(row, "value")))
         }
     }
 }
@@ -218,9 +241,7 @@ fun MileHome(
 ) {
     val summary = remember(store.mileSummaryJson) { MileSummary.parse(store.mileSummaryJson) }
     val recent = remember(store.mileEventsJson) { events(store.mileEventsJson) }
-    LaunchedEffect(store) {
-        if (!store.mileReady) store.refreshMile()
-    }
+    LaunchedEffect(Unit) { store.refreshMile() }
     val theme = LocalPersonalTheme.current
     Column(
         modifier = Modifier
@@ -233,50 +254,55 @@ fun MileHome(
         Column(verticalArrangement = Arrangement.spacedBy(PersonalSpace.s8)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("M.I.L.E.", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
-                Pill(summary.period ?: Unavailable)
+                summary.period?.let { Pill(it) }
             }
             Text("Money Impact & Life Evolution", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
         }
-        Card {
-            Eyebrow("YOUR RECENT FINANCIAL DISTANCE")
-            Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s8)) {
-                Text(summary.distance ?: Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-                Text("MILES", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-            }
-            Text(summary.distanceLine ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
-            if (summary.months.isEmpty()) {
-                Text(Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
-            } else {
-                summary.months.forEach { month ->
-                    Text("${month.label} · ${month.value ?: Unavailable}", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
-                }
-            }
+        if (summary.distance == null && summary.impact == null && recent.isEmpty()) {
+            Text("Nothing has been recorded yet.", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
             Link("View lifetime journey", onLifetime)
+        } else {
+        if (summary.distance != null || summary.months.isNotEmpty()) {
+            Card {
+                Eyebrow("YOUR RECENT FINANCIAL DISTANCE")
+                summary.distance?.let { distance ->
+                    Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s8)) {
+                        Text(distance, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+                        Text("MILES", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
+                }
+                summary.distanceLine?.let { Text(it, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp) }
+                summary.months.forEach { month ->
+                    Text("${month.label} · ${month.value ?: "0"}", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+                }
+                Link("View lifetime journey", onLifetime)
+            }
         }
         Card {
             Eyebrow("POSITIVE FINANCIAL IMPACT")
-            Text(summary.impact ?: Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-            Text(summary.impactLine ?: "positive financial impact", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
+            summary.impact?.let { Text(it, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp) }
+            Text(summary.impactLine ?: "Positive financial impact", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s8)) {
                 homeMix.forEach { name ->
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(summary.outcome(name)?.amount ?: Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        summary.outcome(name)?.amount?.let { Text(it, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
                         Text(name, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 12.sp)
                     }
                 }
             }
             Gold("See where your impact came from  →", onOutcomes)
         }
-        Card {
-            Eyebrow("HOW YOUR FINANCIAL LIFE IS MOVING")
-            Text(summary.movement ?: Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-            Text(Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
+        summary.movement?.let { movement ->
+            Card {
+                Eyebrow("HOW YOUR FINANCIAL LIFE IS MOVING")
+                Text(movement, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+            }
         }
         Card {
             Eyebrow("RECENT MILES")
             Text("What actually moved you forward", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
             if (recent.isEmpty()) {
-                EventRow(R.drawable.fig_shield_check, null, null, null)
+                Text("No miles recorded yet.", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
             } else {
                 recent.forEachIndexed { index, event ->
                     val icon = listOf(R.drawable.fig_shield_check, R.drawable.fig_credit_card, R.drawable.fig_utensils)[index % 3]
@@ -284,6 +310,7 @@ fun MileHome(
                 }
             }
             Link("See every MILE", onOutcomes)
+        }
         }
         Card(Modifier.clickable(onClick = onReport)) {
             Eyebrow(summary.reportYear?.let { "YOUR $it M.I.L.E. REPORT" } ?: "YOUR M.I.L.E. REPORT")
@@ -347,7 +374,7 @@ fun MileSheets(
 
 private fun sheetTitle(step: MileStep, outcome: MileOutcome?, detail: MileTrace?): String = when (step) {
     MileStep.Outcomes -> "M.I.L.E. outcomes"
-    MileStep.Outcome -> outcome?.title ?: Unavailable
+    MileStep.Outcome -> outcome?.title ?: "Outcome"
     MileStep.Trace -> "M.I.L.E. event trace"
     MileStep.Report -> "M.I.L.E. report"
     MileStep.Lifetime -> "Lifetime M.I.L.E."
@@ -356,12 +383,12 @@ private fun sheetTitle(step: MileStep, outcome: MileOutcome?, detail: MileTrace?
 @Composable
 private fun OutcomesBody(summary: MileSummary, onOpen: (String) -> Unit) {
     val theme = LocalPersonalTheme.current
-    Text(summary.period ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
+    summary.period?.let { Text(it, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp) }
     Text("IMPACT FROM YOUR ACTIONS", color = eyebrow(), fontFamily = theme.fontFamily, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
-    Text(summary.impact ?: Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+    summary.impact?.let { Text(it, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp) }
     Text(summary.impactLine ?: "Positive financial impact", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
     Text("THIS IMPACT EARNED YOU", color = eyebrow(), fontFamily = theme.fontFamily, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
-    Text(summary.distance ?: Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+    summary.distance?.let { Text(it, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp) }
     Text("IMPACT BREAKDOWN", color = eyebrow(), fontFamily = theme.fontFamily, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
     families.forEach { family ->
         val match = summary.outcome(family.name)
@@ -372,64 +399,60 @@ private fun OutcomesBody(summary: MileSummary, onOpen: (String) -> Unit) {
 @Composable
 private fun OutcomeBody(outcome: MileOutcome?) {
     val theme = LocalPersonalTheme.current
-    Text(outcome?.line ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
-    Text(outcome?.amount ?: Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-    Text(outcome?.share ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
+    outcome?.line?.let { Text(it, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp) }
+    outcome?.amount?.let { Text(it, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp) }
+    outcome?.share?.let { Text(it, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp) }
     Text("THIS IMPACT EARNED YOU", color = eyebrow(), fontFamily = theme.fontFamily, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
-    Text(outcome?.miles ?: Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+    outcome?.miles?.let { Text(it, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp) }
     Text("HOW THIS IMPACT WAS CREATED", color = eyebrow(), fontFamily = theme.fontFamily, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s8)) {
-        listOf("Impact" to outcome?.amount, "MILES" to outcome?.miles, "Actions" to null).forEach { (label, value) ->
+        listOf("Impact" to outcome?.amount, "MILES" to outcome?.miles, "Actions" to outcome?.actions).forEach { (label, value) ->
             Card(Modifier.weight(1f)) {
-                Text(value ?: Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                value?.let { Text(it, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp) }
                 Text(label, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 12.sp)
             }
         }
     }
     Text("KEY DRIVERS", color = eyebrow(), fontFamily = theme.fontFamily, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
-    Text(Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
+    outcome?.drivers?.let { Text(it, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp) }
     Text("RECENT ACTIONS", color = eyebrow(), fontFamily = theme.fontFamily, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
-    Text(Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
+    outcome?.recent?.let { Text(it, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp) }
 }
 
 @Composable
 private fun TraceBody(detail: MileTrace?, onOpenDecision: (String) -> Unit) {
     val theme = LocalPersonalTheme.current
-    Text(detail?.miles ?: Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-    Text(detail?.title ?: Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-    Text(detail?.line ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
-    Text(detail?.whenLabel ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+    detail?.miles?.let { Text(it, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp) }
+    Text(detail?.title ?: "Verified impact", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+    detail?.line?.let { Text(it, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp) }
+    detail?.whenLabel?.let { Text(it, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp) }
     Text("WHAT CHANGED", color = eyebrow(), fontFamily = theme.fontFamily, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
-    Text(detail?.changed ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
+    detail?.changed?.let { Text(it, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp) }
     Text("WHY THESE MILES EXIST", color = eyebrow(), fontFamily = theme.fontFamily, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
-    Text(detail?.decision ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
-    val decisionId = detail?.decisionId
-    if (decisionId != null) {
+    detail?.decision?.let { Text(it, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp) }
+    detail?.decisionId?.let { decisionId ->
         Gold("View decision details") { onOpenDecision(decisionId) }
-    } else {
-        Text("View decision details", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
-        Text(Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
     }
 }
 
 @Composable
 private fun ReportBody(summary: MileSummary) {
     val theme = LocalPersonalTheme.current
-    Text(summary.reportYear ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
+    summary.reportYear?.let { Text(it, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp) }
     Text("Your M.I.L.E.", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-    Text(summary.reportLine ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
-    Text(summary.reportDistance ?: Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+    summary.reportLine?.let { Text(it, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp) }
+    summary.reportDistance?.let { Text(it, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp) }
     Text("MILES travelled this year", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
-    Text(summary.reportImpact ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
+    summary.reportImpact?.let { Text(it, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp) }
     Text("YOUR YEAR IN NUMBERS", color = eyebrow(), fontFamily = theme.fontFamily, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
-    listOf("Money protected", "Debt reduced", "Money saved", "Wealth built", "Decisions carried through", "Missions advanced", "Milestones reached").forEach { label ->
+    summary.reportNumbers.forEach { row ->
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(label, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
-            Text(Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Text(row.label, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
+            Text(row.value ?: "0", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp)
         }
     }
     Text("BIGGEST EVOLUTION", color = eyebrow(), fontFamily = theme.fontFamily, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
-    Text(Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
+    summary.reportEvolution?.let { Text(it, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp) }
 }
 
 @Composable
@@ -437,16 +460,21 @@ private fun LifetimeBody(summary: MileSummary) {
     val theme = LocalPersonalTheme.current
     Text("Your Financial Journey", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
     Text(summary.lifetimeLine ?: "Your financial evolution doesn't reset each year. It keeps building.", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
-    Text(summary.lifetimeDistance ?: Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+    summary.lifetimeDistance?.let { Text(it, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp) }
     Text("Lifetime MILES", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
-    Text(summary.lifetimeImpact ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
+    summary.lifetimeImpact?.let { Text(it, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp) }
     Text("DISTANCE BY YEAR", color = eyebrow(), fontFamily = theme.fontFamily, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
-    Text(Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
-    Text("WHAT BUILT YOUR DISTANCE", color = eyebrow(), fontFamily = theme.fontFamily, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
-    listOf("Safety & resilience", "Debt & commitments", "Saving & cash flow", "Wealth building").forEach { label ->
+    summary.lifetimeYears.forEach { row ->
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(label, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
-            Text(Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Text(row.label, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
+            Text(row.value ?: "0", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        }
+    }
+    Text("WHAT BUILT YOUR DISTANCE", color = eyebrow(), fontFamily = theme.fontFamily, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
+    summary.lifetimeBuilt.forEach { row ->
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(row.label, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
+            Text(row.value ?: "0", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp)
         }
     }
 }
@@ -464,7 +492,7 @@ private fun FamilyRow(family: Family, amount: String?, onOpen: (() -> Unit)?) {
             Text(family.name, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 15.sp)
             Text(family.line, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
         }
-        Text(amount ?: Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        amount?.let { Text(it, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp) }
     }
 }
 
@@ -480,10 +508,10 @@ private fun EventRow(icon: Int, title: String?, line: String?, miles: String?, o
     ) {
         FigIcon(icon, 28.dp)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(title ?: Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-            Text(line ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+            Text(title ?: "Verified impact", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            line?.let { Text(it, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp) }
         }
-        Text(miles ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+        miles?.let { Text(it, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
     }
 }
 

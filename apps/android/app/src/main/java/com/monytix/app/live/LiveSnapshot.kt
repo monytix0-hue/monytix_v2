@@ -30,6 +30,12 @@ data class ActiveMission(
     val progress: String?,
 )
 
+data class LiveMile(
+    val impact: String?,
+    val line: String?,
+    val pills: List<String>,
+)
+
 data class LiveSnapshot(
     val recordedFlowAvailable: Boolean,
     val currencies: List<RecordedCurrency>,
@@ -39,6 +45,7 @@ data class LiveSnapshot(
     val previewsKnown: Boolean,
     val previews: List<RecordedPreview>,
     val activeMission: ActiveMission?,
+    val mile: LiveMile?,
 ) {
     companion object {
         fun unavailable() = LiveSnapshot(
@@ -50,6 +57,7 @@ data class LiveSnapshot(
             previewsKnown = false,
             previews = emptyList(),
             activeMission = null,
+            mile = null,
         )
 
         fun parse(json: String): LiveSnapshot {
@@ -107,6 +115,24 @@ data class LiveSnapshot(
                 } else {
                     null
                 }
+                val mileObject = root.optJSONObject("mile")
+                val mile = if (mileObject?.optBoolean("available") == true) {
+                    val pills = mileObject.optJSONArray("pills")
+                    LiveMile(
+                        impact = mileObject.optionalText("impact"),
+                        line = mileObject.optionalText("line"),
+                        pills = buildList {
+                            if (pills != null) {
+                                for (index in 0 until pills.length()) {
+                                    val label = pills.optString(index)
+                                    if (label.isNotBlank()) add(label)
+                                }
+                            }
+                        },
+                    )
+                } else {
+                    null
+                }
                 LiveSnapshot(
                     recordedFlowAvailable = flow?.optBoolean("available") == true && currencies.isNotEmpty(),
                     currencies = currencies,
@@ -120,6 +146,7 @@ data class LiveSnapshot(
                     previewsKnown = previewRows != null,
                     previews = previews,
                     activeMission = activeMission,
+                    mile = mile,
                 )
             } catch (_: Exception) {
                 unavailable()

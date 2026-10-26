@@ -186,4 +186,39 @@ test("GET /v1/ui/rewards and journey reflect minted MILE and funded impact", asy
   assert.equal(journey.json().data.items.length, 1);
   assert.equal(journey.json().data.items[0].mission_code, "M01");
   assert.equal(journey.json().data.items[0].mile_awarded, 30);
+
+  const summary = await app.inject({
+    method: "GET",
+    url: "/v1/mile/summary",
+    headers: { authorization: "Bearer good", "x-monytix-owner-id": ownerId },
+  });
+  assert.equal(summary.statusCode, 200);
+  assert.equal(summary.json().contract, "mile-summary-v0.1");
+  assert.equal(summary.json().empty_state, false);
+  assert.equal(summary.json().distance.available, true);
+  assert.equal(summary.json().distance.value, "30");
+  const safety = summary.json().outcomes.find((item: { title: string }) => item.title === "Safety");
+  assert.equal(String(safety.amount).includes("2,500"), true);
+  assert.equal(safety.drivers, "Build an Emergency Buffer");
+  assert.equal(summary.json().report.numbers.find((item: { label: string }) => item.label === "Missions advanced").value, "1");
+
+  const events = await app.inject({
+    method: "GET",
+    url: "/v1/mile/events",
+    headers: { authorization: "Bearer good", "x-monytix-owner-id": ownerId },
+  });
+  assert.equal(events.statusCode, 200);
+  assert.equal(events.json().contract, "mile-events-v0.1");
+  assert.equal(events.json().events.length, 1);
+  assert.equal(events.json().events[0].title, "Build an Emergency Buffer");
+  assert.equal(events.json().events[0].miles, "30");
+
+  const detail = await app.inject({
+    method: "GET",
+    url: `/v1/mile/events/${events.json().events[0].id}`,
+    headers: { authorization: "Bearer good", "x-monytix-owner-id": ownerId },
+  });
+  assert.equal(detail.statusCode, 200);
+  assert.equal(detail.json().event.title, "Build an Emergency Buffer");
+  assert.match(detail.json().event.changed, /Safety/);
 });

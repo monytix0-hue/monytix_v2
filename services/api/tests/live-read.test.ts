@@ -192,6 +192,7 @@ test("GET /v1/ui/live returns recorded money and leaves unpublished projections 
     weight_summary: { available: boolean };
     reflection_summary: { available: boolean };
     active_mission: { available: boolean };
+    mile: { available: boolean };
   };
   assert.equal(body.contract, "ui-live-v0.1");
   assert.equal(body.recordedFlow.available, true);
@@ -207,6 +208,7 @@ test("GET /v1/ui/live returns recorded money and leaves unpublished projections 
   assert.equal(body.weight_summary.available, false);
   assert.equal(body.reflection_summary.available, false);
   assert.equal(body.active_mission.available, false);
+  assert.equal(body.mile.available, false);
   const text = JSON.stringify(body);
   assert.equal(text.includes("4000"), false);
   assert.equal(text.includes("Emergency"), false);

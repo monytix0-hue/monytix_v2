@@ -597,6 +597,54 @@ test("accepting a decision spawns a mission; snooze and reminder update expiry",
   assert.equal(missions.json().meta.api_version, "v1.2");
   assert.equal(missions.json().data.active_missions.length, 1);
   assert.equal(missions.json().data.active_missions[0].canonical_code, "M30");
+  assert.equal(missions.json().contract, "ui-missions-v0.1");
+  assert.equal(missions.json().summary.available, true);
+  assert.equal(missions.json().active[0].title, "Stop Financial Leakage");
+  assert.equal(missions.json().active[0].state, "active");
+  assert.equal(missions.json().completed.length, 0);
+
+  const definition = await app.inject({
+    method: "GET",
+    url: "/v1/ui/missions/definitions/M01",
+    headers: ownerHeaders,
+  });
+  assert.equal(definition.statusCode, 200);
+  assert.equal(definition.json().title, "Build an Emergency Buffer");
+  assert.equal(definition.json().basis, "Contribution + safety days");
+  assert.deepEqual(definition.json().decisions, ["D1", "D17"]);
+
+  const created = await app.inject({
+    method: "POST",
+    url: "/v1/missions",
+    headers: { ...ownerHeaders, "idempotency-key": "mission-create-M01" },
+    payload: { canonical_mission_code: "M01", reach_amount: 4000, current_amount: 1000 },
+  });
+  assert.equal(created.statusCode, 200);
+  const missionId = created.json().mission_id as string;
+  const progressed = await app.inject({
+    method: "POST",
+    url: `/v1/missions/${missionId}/actions`,
+    headers: { ...ownerHeaders, "idempotency-key": "mission-progress-M01" },
+    payload: { action: "ADD_PROGRESS", amount: 3000, note: "Moved the buffer" },
+  });
+  assert.equal(progressed.statusCode, 200);
+  assert.equal(progressed.json().state, "COMPLETED");
+  const detail = await app.inject({
+    method: "GET",
+    url: `/v1/ui/missions/${missionId}`,
+    headers: ownerHeaders,
+  });
+  assert.equal(detail.statusCode, 200);
+  assert.equal(detail.json().mission.title, "Build an Emergency Buffer");
+  assert.equal(detail.json().mission.matters, "Contribution + safety days");
+  assert.match(detail.json().mission.recent, /Moved the buffer/);
+  const after = await app.inject({
+    method: "GET",
+    url: "/v1/ui/missions",
+    headers: ownerHeaders,
+  });
+  assert.equal(after.json().data.active_missions.some((item: { canonical_code: string }) => item.canonical_code === "M01"), false);
+  assert.equal(after.json().completed.some((item: { title: string; state: string }) => item.title === "Build an Emergency Buffer" && item.state === "completed"), true);
 
   finance.decisions.push({
     decision_id: "dec-2",

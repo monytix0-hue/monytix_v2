@@ -19,7 +19,8 @@ import type { DecisionMode, FeedbackAction, HumanContextResult, PendingFact, Wei
 import { mentionsOtherAccount } from "./human-context.js";
 import type { Normalized } from "./types.js";
 import { DOMAIN_TABLE } from "./types.js";
-import { decisionScreenFromRow } from "./ui-read-models.js";
+import { phoneMileEvent, phoneMileEvents, phoneMileSummary, type MileFact } from "./mile-read.js";
+import { decisionScreenFromRow, missionDefinitionDocument, missionDetailDocument, missionProgressLabel } from "./ui-read-models.js";
 
 export type Override = { category_id: string; subcategory_id: string | null };
 
@@ -41,10 +42,19 @@ export type FinanceWriter = {
   applyDecisionAction(input: DecisionActionInput): Promise<DecisionActionResult>;
   sweepExpiredSnoozes(ownerId: string | null): Promise<{ swept: number }>;
   listMissions(ownerId: string): Promise<MissionRow[]>;
+  missionDefinition(code: string): Promise<Record<string, unknown> | null>;
+  createMission(input: { owner_id: string; canonical_mission_code: string; reach_amount: number; current_amount: number }): Promise<{ mission_id: string } | null>;
+  addMissionProgress(input: { owner_id: string; mission_id: string; amount: number; note: string | null; idempotency_key: string }): Promise<Record<string, unknown> | null>;
+  missionDetail(ownerId: string, missionId: string): Promise<Record<string, unknown> | null>;
+  missionJournal(ownerId: string, missionId: string): Promise<Record<string, unknown> | null>;
+  missionCompletion(ownerId: string, missionId: string): Promise<Record<string, unknown> | null>;
   pendingOutcomeMatches(ownerId: string | null): Promise<{ matches: OutcomeMatch[] }>;
   applyOutcomesMile(input: ApplyOutcomesMileInput): Promise<{ status: "APPLIED" }>;
   rewardsSummary(ownerId: string): Promise<RewardsSummary>;
   journeyItems(ownerId: string): Promise<JourneyItem[]>;
+  mileSummary(ownerId: string): Promise<Record<string, unknown>>;
+  listMileEvents(ownerId: string): Promise<Record<string, unknown>>;
+  mileEvent(ownerId: string, eventId: string): Promise<Record<string, unknown> | null>;
   addWeightFeedback(ownerId: string, transactionId: string, input: WeightFeedbackInput): Promise<{ id: string }>;
   setDecisionMode(ownerId: string, transactionId: string, mode: DecisionMode, annotatedVia: string): Promise<{ mode: DecisionMode }>;
   addReflection(ownerId: string, transactionId: string, input: ReflectionInput): Promise<{ id: string }>;
@@ -133,6 +143,7 @@ export class MemoryFinance implements FinanceWriter {
   }[] = [];
   decisions: (DecisionRow & { idempotency_key: string })[] = [];
   missions: (MissionRow & { idempotency_key: string; current_progress_inr?: number })[] = [];
+  progressEvents: { owner_id: string; mission_id: string; amount: number; note: string | null; idempotency_key: string }[] = [];
   decisionMissionLinks: { decision_id: string; mission_id: string; link_role: string }[] = [];
   decisionTransitions: { owner_id: string; decision_id: string; from_state: string | null; to_state: string; action_name: string; idempotency_key: string }[] = [];
   financialOutcomes: { id: string; owner_id: string; mission_id: string | null; transaction_id: string; idempotency_key: string; economic_event_key: string; observed_amount: number }[] = [];
@@ -142,9 +153,12 @@ export class MemoryFinance implements FinanceWriter {
     id: string;
     owner_id: string;
     mission_id: string | null;
+    decision_id: string | null;
     dedupe_key: string;
     mile_awarded: number;
+    impact_amount: number;
     outcome_family_code: string | null;
+    event_type: string;
     occurred_at: string;
     status: string;
   }[] = [];
@@ -419,8 +433,91 @@ export class MemoryFinance implements FinanceWriter {
 
   async listMissions(ownerId: string): Promise<MissionRow[]> {
     return this.missions
-      .filter((item) => item.owner_id === ownerId && (item.state === "ACTIVE" || item.state === "PAUSED"))
+      .filter((item) => item.owner_id === ownerId && (item.state === "ACTIVE" || item.state === "PAUSED" || item.state === "COMPLETED"))
       .sort((left, right) => left.canonical_mission_code.localeCompare(right.canonical_mission_code));
+  }
+
+  async missionDefinition(code: string): Promise<Record<string, unknown> | null> {
+    return missionDefinitionDocument(code);
+  }
+
+  async createMission(input: { owner_id: string; canonical_mission_code: string; reach_amount: number; current_amount: number }): Promise<{ mission_id: string } | null> {
+    const fact = missionDefinitionDocument(input.canonical_mission_code);
+    if (!fact) return null;
+    const key = `user-mission:${input.canonical_mission_code}`;
+    let mission = this.missions.find((item) => item.owner_id === input.owner_id && item.idempotency_key === key);
+    if (!mission) {
+      mission = {
+        mission_id: randomUUID(),
+        owner_id: input.owner_id,
+        canonical_mission_code: input.canonical_mission_code,
+        title: String(fact.title),
+        state: "ACTIVE",
+        origin_type: "USER_CREATED",
+        target_definition: { default_target_inr: input.reach_amount, current_inr: input.current_amount, metric_basis: fact.basis },
+        current_progress_inr: input.current_amount,
+        category: String(fact.category),
+        measurement_basis: String(fact.basis),
+        product_need_class: String(fact.build),
+        idempotency_key: key,
+      };
+      this.missions.push(mission);
+    } else if (mission.state !== "COMPLETED" && mission.state !== "CANCELLED") {
+      mission.target_definition = { ...mission.target_definition, default_target_inr: input.reach_amount };
+      mission.current_progress_inr = Math.max(Number(mission.current_progress_inr || 0), input.current_amount);
+    }
+    return { mission_id: mission.mission_id };
+  }
+
+  async addMissionProgress(input: { owner_id: string; mission_id: string; amount: number; note: string | null; idempotency_key: string }): Promise<Record<string, unknown> | null> {
+    const mission = this.missions.find((item) => item.owner_id === input.owner_id && item.mission_id === input.mission_id);
+    if (!mission || (mission.state !== "ACTIVE" && mission.state !== "PAUSED")) return null;
+    const seen = this.progressEvents.some((item) => item.owner_id === input.owner_id && item.idempotency_key === input.idempotency_key);
+    if (!seen) {
+      this.progressEvents.push({
+        owner_id: input.owner_id,
+        mission_id: input.mission_id,
+        amount: input.amount,
+        note: input.note,
+        idempotency_key: input.idempotency_key,
+      });
+      const next = Number(mission.current_progress_inr || 0) + input.amount;
+      const target = Number(mission.target_definition?.default_target_inr || 0);
+      mission.current_progress_inr = next;
+      if (target > 0 && next >= target) mission.state = "COMPLETED";
+    }
+    return {
+      mission_id: mission.mission_id,
+      state: mission.state,
+      current_progress_inr: mission.current_progress_inr,
+      progress: missionProgressLabel(mission),
+    };
+  }
+
+  async missionDetail(ownerId: string, missionId: string): Promise<Record<string, unknown> | null> {
+    const mission = this.missions.find((item) => item.owner_id === ownerId && item.mission_id === missionId);
+    if (!mission) return null;
+    const latest = [...this.progressEvents].reverse().find((item) => item.mission_id === missionId);
+    const recent = latest ? latest.note || missionProgressLabel(mission) : null;
+    return missionDetailDocument(mission, recent);
+  }
+
+  async missionJournal(ownerId: string, missionId: string): Promise<Record<string, unknown> | null> {
+    const mission = this.missions.find((item) => item.owner_id === ownerId && item.mission_id === missionId);
+    if (!mission) return null;
+    return {
+      since: missionProgressLabel(mission),
+      entries: this.progressEvents
+        .filter((item) => item.mission_id === missionId)
+        .map((item) => ({ title: missionProgressLabel({ ...mission, current_progress_inr: item.amount, state: "ACTIVE", target_definition: {} }), detail: item.note || "Progress recorded" })),
+    };
+  }
+
+  async missionCompletion(ownerId: string, missionId: string): Promise<Record<string, unknown> | null> {
+    const detail = await this.missionDetail(ownerId, missionId);
+    if (!detail) return null;
+    const mission = detail.mission as { title?: string; changed?: string; proof?: string; unlocks?: string };
+    return { mission: { title: mission.title, changed: mission.changed, proof: mission.proof, unlocks: mission.unlocks } };
   }
 
   async pendingOutcomeMatches(ownerId: string | null): Promise<{ matches: OutcomeMatch[] }> {
@@ -501,9 +598,12 @@ export class MemoryFinance implements FinanceWriter {
         id: randomUUID(),
         owner_id: input.owner_id,
         mission_id: pkg.mile_event.mission_id,
+        decision_id: pkg.mile_event.decision_id,
         dedupe_key: pkg.mile_event.dedupe_key,
         mile_awarded: pkg.mile_event.mile_awarded,
+        impact_amount: pkg.impact.amount,
         outcome_family_code: pkg.mile_event.outcome_family_code,
+        event_type: pkg.mile_event.event_type,
         occurred_at: pkg.mile_event.occurred_at || new Date().toISOString(),
         status: "FINALIZED",
       });
@@ -537,6 +637,39 @@ export class MemoryFinance implements FinanceWriter {
           occurred_at: item.occurred_at,
         })),
     };
+  }
+
+  private mileFacts(ownerId: string): MileFact[] {
+    return this.mileEvents
+      .filter((item) => item.owner_id === ownerId && item.status === "FINALIZED")
+      .map((item) => {
+        const mission = this.missions.find((row) => row.mission_id === item.mission_id);
+        const decision = this.decisions.find((row) => row.decision_id === item.decision_id);
+        return {
+          id: item.id,
+          family: item.outcome_family_code,
+          miles: item.mile_awarded,
+          impact: item.impact_amount,
+          occurred_at: item.occurred_at,
+          mission_id: item.mission_id,
+          mission_title: mission?.title ?? null,
+          decision_id: item.decision_id,
+          decision_title: decision?.title ?? null,
+          event_type: item.event_type,
+        };
+      });
+  }
+
+  async mileSummary(ownerId: string): Promise<Record<string, unknown>> {
+    return phoneMileSummary(this.mileFacts(ownerId));
+  }
+
+  async listMileEvents(ownerId: string): Promise<Record<string, unknown>> {
+    return phoneMileEvents(this.mileFacts(ownerId));
+  }
+
+  async mileEvent(ownerId: string, eventId: string): Promise<Record<string, unknown> | null> {
+    return phoneMileEvent(this.mileFacts(ownerId), eventId);
   }
 
   async journeyItems(ownerId: string): Promise<JourneyItem[]> {

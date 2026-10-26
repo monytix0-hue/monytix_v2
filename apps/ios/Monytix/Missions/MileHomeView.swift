@@ -22,7 +22,12 @@ private let mileFamilies = [
     MileFamily(name: "Freedom", line: "More financial flexibility"),
 ]
 
-private let homeMix = ["Protected", "Debt", "Saved", "Wealth"]
+private let homeMix = ["Safety", "Debt", "Savings", "Wealth"]
+
+private struct MileStat {
+    var label: String
+    var value: String?
+}
 
 private struct MileOutcome {
     var id: String
@@ -31,6 +36,9 @@ private struct MileOutcome {
     var amount: String?
     var miles: String?
     var share: String?
+    var drivers: String?
+    var recent: String?
+    var actions: String?
 }
 
 private struct MileMonth {
@@ -54,6 +62,10 @@ private struct MileSummary {
     var lifetimeDistance: String?
     var lifetimeImpact: String?
     var lifetimeLine: String?
+    var reportNumbers: [MileStat] = []
+    var reportEvolution: String?
+    var lifetimeYears: [MileStat] = []
+    var lifetimeBuilt: [MileStat] = []
 
     static let empty = MileSummary()
 
@@ -85,7 +97,11 @@ private struct MileSummary {
             reportLine: text(report, "line"),
             lifetimeDistance: text(lifetime, "distance"),
             lifetimeImpact: text(lifetime, "impact"),
-            lifetimeLine: text(lifetime, "line")
+            lifetimeLine: text(lifetime, "line"),
+            reportNumbers: stats(report, "numbers"),
+            reportEvolution: text(report, "evolution"),
+            lifetimeYears: stats(lifetime, "years"),
+            lifetimeBuilt: stats(lifetime, "built")
         )
     }
 }
@@ -129,7 +145,24 @@ private func outcomeRows(_ root: [String: Any]) -> [MileOutcome] {
     guard let rows = root["outcomes"] as? [[String: Any]] else { return [] }
     return rows.compactMap { row in
         guard let id = row["id"] as? String, !id.isEmpty else { return nil }
-        return MileOutcome(id: id, title: text(row, "title"), line: text(row, "line"), amount: text(row, "amount"), miles: text(row, "miles"), share: text(row, "share"))
+        return MileOutcome(
+            id: id,
+            title: text(row, "title"),
+            line: text(row, "line"),
+            amount: text(row, "amount"),
+            miles: text(row, "miles"),
+            share: text(row, "share"),
+            drivers: text(row, "drivers"),
+            recent: text(row, "recent"),
+            actions: text(row, "actions")
+        )
+    }
+}
+
+private func stats(_ obj: [String: Any]?, _ key: String) -> [MileStat] {
+    ((obj?[key] as? [Any]) ?? []).compactMap { item in
+        guard let row = item as? [String: Any], let label = row["label"] as? String, !label.isEmpty else { return nil }
+        return MileStat(label: label, value: text(row, "value"))
     }
 }
 
@@ -181,57 +214,69 @@ struct MileHomeView: View {
                     HStack {
                         Text("M.I.L.E.").personalText(.primary, size: 22, weight: .extraBold)
                         Spacer()
-                        pill(summary.period ?? "Unavailable")
+                        if let period = summary.period { pill(period) }
                     }
                     Text("Money Impact & Life Evolution").personalText(.secondary, size: 14)
                 }
-                card {
-                    eyebrow("YOUR RECENT FINANCIAL DISTANCE")
-                    HStack(alignment: .firstTextBaseline, spacing: PersonalSpace.s8) {
-                        Text(summary.distance ?? "Unavailable").personalText(.primary, size: 16, weight: .bold)
-                        Text("MILES").personalText(.secondary, size: 13, weight: .bold)
-                    }
-                    Text(summary.distanceLine ?? "Unavailable").personalText(.secondary, size: 14)
-                    if summary.months.isEmpty {
-                        Text("Unavailable").personalText(.secondary, size: 13)
-                    } else {
-                        ForEach(Array(summary.months.enumerated()), id: \.offset) { _, month in
-                            Text("\(month.label) · \(month.value ?? "Unavailable")").personalText(.secondary, size: 13)
-                        }
-                    }
+                if summary.distance == nil && summary.impact == nil && recent.isEmpty {
+                    Text("Nothing has been recorded yet.").personalText(.secondary, size: 15)
                     link("View lifetime journey", action: onLifetime)
-                }
-                card {
-                    eyebrow("POSITIVE FINANCIAL IMPACT")
-                    Text(summary.impact ?? "Unavailable").personalText(.primary, size: 16, weight: .bold)
-                    Text(summary.impactLine ?? "positive financial impact").personalText(.secondary, size: 14)
-                    HStack(alignment: .top, spacing: PersonalSpace.s8) {
-                        ForEach(homeMix, id: \.self) { name in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(summary.outcome(named: name)?.amount ?? "Unavailable").personalText(.primary, size: 13, weight: .bold)
-                                Text(name).personalText(.secondary, size: 12)
+                } else {
+                    if summary.distance != nil || !summary.months.isEmpty {
+                        card {
+                            eyebrow("YOUR RECENT FINANCIAL DISTANCE")
+                            if let distance = summary.distance {
+                                HStack(alignment: .firstTextBaseline, spacing: PersonalSpace.s8) {
+                                    Text(distance).personalText(.primary, size: 16, weight: .bold)
+                                    Text("MILES").personalText(.secondary, size: 13, weight: .bold)
+                                }
                             }
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            if let line = summary.distanceLine {
+                                Text(line).personalText(.secondary, size: 14)
+                            }
+                            ForEach(Array(summary.months.enumerated()), id: \.offset) { _, month in
+                                Text("\(month.label) · \(month.value ?? "0")").personalText(.secondary, size: 13)
+                            }
+                            link("View lifetime journey", action: onLifetime)
                         }
                     }
-                    gold("See where your impact came from  →", action: onOutcomes)
-                }
-                card {
-                    eyebrow("HOW YOUR FINANCIAL LIFE IS MOVING")
-                    Text(summary.movement ?? "Unavailable").personalText(.primary, size: 16, weight: .bold)
-                    Text("Unavailable").personalText(.secondary, size: 14)
-                }
-                card {
-                    eyebrow("RECENT MILES")
-                    Text("What actually moved you forward").personalText(.secondary, size: 14)
-                    if recent.isEmpty {
-                        eventRow("FigShieldCheck", nil, nil, nil, nil)
-                    } else {
-                        ForEach(Array(recent.enumerated()), id: \.element.id) { index, event in
-                            eventRow(mileIcon(index), event.title, event.line, event.miles) { onTrace(event.id) }
+                    card {
+                        eyebrow("POSITIVE FINANCIAL IMPACT")
+                        if let impact = summary.impact {
+                            Text(impact).personalText(.primary, size: 16, weight: .bold)
+                        }
+                        Text(summary.impactLine ?? "Positive financial impact").personalText(.secondary, size: 14)
+                        HStack(alignment: .top, spacing: PersonalSpace.s8) {
+                            ForEach(homeMix, id: \.self) { name in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    if let amount = summary.outcome(named: name)?.amount {
+                                        Text(amount).personalText(.primary, size: 13, weight: .bold)
+                                    }
+                                    Text(name).personalText(.secondary, size: 12)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+                        gold("See where your impact came from  →", action: onOutcomes)
+                    }
+                    if let movement = summary.movement {
+                        card {
+                            eyebrow("HOW YOUR FINANCIAL LIFE IS MOVING")
+                            Text(movement).personalText(.primary, size: 16, weight: .bold)
                         }
                     }
-                    link("See every MILE", action: onOutcomes)
+                    card {
+                        eyebrow("RECENT MILES")
+                        Text("What actually moved you forward").personalText(.secondary, size: 14)
+                        if recent.isEmpty {
+                            Text("No miles recorded yet.").personalText(.secondary, size: 14)
+                        } else {
+                            ForEach(Array(recent.enumerated()), id: \.element.id) { index, event in
+                                eventRow(mileIcon(index), event.title, event.line, event.miles) { onTrace(event.id) }
+                            }
+                        }
+                        link("See every MILE", action: onOutcomes)
+                    }
                 }
                 Button(action: onReport) {
                     card {
@@ -246,11 +291,7 @@ struct MileHomeView: View {
             .padding(.top, PersonalSpace.s20)
             .padding(.bottom, 128)
         }
-        .task {
-            if !store.mileReady {
-                await store.refreshMile()
-            }
-        }
+        .task { await store.refreshMile() }
     }
 
     private func mileIcon(_ index: Int) -> String {
@@ -262,11 +303,11 @@ struct MileHomeView: View {
             HStack(spacing: PersonalSpace.s12) {
                 FigIcon(name: icon, size: 28)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title ?? "Unavailable").personalText(.primary, size: 15, weight: .bold)
-                    Text(line ?? "Unavailable").personalText(.secondary, size: 13)
+                    Text(title ?? "Verified impact").personalText(.primary, size: 15, weight: .bold)
+                    if let line { Text(line).personalText(.secondary, size: 13) }
                 }
                 Spacer()
-                Text(miles ?? "Unavailable").personalText(.secondary, size: 13, weight: .bold)
+                if let miles { Text(miles).personalText(.secondary, size: 13, weight: .bold) }
             }
         }
         .buttonStyle(.plain)
@@ -380,7 +421,7 @@ struct MileSheetsView: View {
     private func title(_ step: MileStep) -> String {
         switch step {
         case .outcomes: "M.I.L.E. outcomes"
-        case .outcome: outcome?.title ?? "Unavailable"
+        case .outcome: outcome?.title ?? "Outcome"
         case .trace: "M.I.L.E. event trace"
         case .report: "M.I.L.E. report"
         case .lifetime: "Lifetime M.I.L.E."
@@ -389,12 +430,12 @@ struct MileSheetsView: View {
 
     private var outcomesBody: some View {
         VStack(alignment: .leading, spacing: PersonalSpace.s16) {
-            Text(summary.period ?? "Unavailable").personalText(.secondary, size: 14)
+            if let period = summary.period { Text(period).personalText(.secondary, size: 14) }
             section("IMPACT FROM YOUR ACTIONS")
-            Text(summary.impact ?? "Unavailable").personalText(.primary, size: 16, weight: .bold)
+            if let impact = summary.impact { Text(impact).personalText(.primary, size: 16, weight: .bold) }
             Text(summary.impactLine ?? "Positive financial impact").personalText(.secondary, size: 14)
             section("THIS IMPACT EARNED YOU")
-            Text(summary.distance ?? "Unavailable").personalText(.primary, size: 16, weight: .bold)
+            if let distance = summary.distance { Text(distance).personalText(.primary, size: 16, weight: .bold) }
             section("IMPACT BREAKDOWN")
             ForEach(mileFamilies, id: \.name) { family in
                 let match = summary.outcome(named: family.name)
@@ -407,7 +448,9 @@ struct MileSheetsView: View {
                             Text(family.line).personalText(.secondary, size: 13)
                         }
                         Spacer()
-                        Text(match?.amount ?? "Unavailable").personalText(.primary, size: 14, weight: .bold)
+                        if let amount = match?.amount {
+                            Text(amount).personalText(.primary, size: 14, weight: .bold)
+                        }
                     }
                 }
                 .buttonStyle(.plain)
@@ -418,61 +461,58 @@ struct MileSheetsView: View {
 
     private var outcomeBody: some View {
         VStack(alignment: .leading, spacing: PersonalSpace.s16) {
-            Text(outcome?.line ?? "Unavailable").personalText(.secondary, size: 14)
-            Text(outcome?.amount ?? "Unavailable").personalText(.primary, size: 16, weight: .bold)
-            Text(outcome?.share ?? "Unavailable").personalText(.secondary, size: 14)
+            if let line = outcome?.line { Text(line).personalText(.secondary, size: 14) }
+            if let amount = outcome?.amount { Text(amount).personalText(.primary, size: 16, weight: .bold) }
+            if let share = outcome?.share { Text(share).personalText(.secondary, size: 14) }
             section("THIS IMPACT EARNED YOU")
-            Text(outcome?.miles ?? "Unavailable").personalText(.primary, size: 16, weight: .bold)
+            if let miles = outcome?.miles { Text(miles).personalText(.primary, size: 16, weight: .bold) }
             section("HOW THIS IMPACT WAS CREATED")
             HStack(spacing: PersonalSpace.s8) {
                 stat(outcome?.amount, "Impact")
                 stat(outcome?.miles, "MILES")
-                stat(nil, "Actions")
+                stat(outcome?.actions, "Actions")
             }
             section("KEY DRIVERS")
-            Text("Unavailable").personalText(.secondary, size: 14)
+            if let drivers = outcome?.drivers { Text(drivers).personalText(.secondary, size: 14) }
             section("RECENT ACTIONS")
-            Text("Unavailable").personalText(.secondary, size: 14)
+            if let recent = outcome?.recent { Text(recent).personalText(.secondary, size: 14) }
         }
     }
 
     private var traceBody: some View {
         VStack(alignment: .leading, spacing: PersonalSpace.s16) {
-            Text(detail?.miles ?? "Unavailable").personalText(.primary, size: 16, weight: .bold)
-            Text(detail?.title ?? "Unavailable").personalText(.primary, size: 16, weight: .bold)
-            Text(detail?.line ?? "Unavailable").personalText(.secondary, size: 14)
-            Text(detail?.whenLabel ?? "Unavailable").personalText(.secondary, size: 13)
+            if let miles = detail?.miles { Text(miles).personalText(.primary, size: 16, weight: .bold) }
+            Text(detail?.title ?? "Verified impact").personalText(.primary, size: 16, weight: .bold)
+            if let line = detail?.line { Text(line).personalText(.secondary, size: 14) }
+            if let whenLabel = detail?.whenLabel { Text(whenLabel).personalText(.secondary, size: 13) }
             section("WHAT CHANGED")
-            Text(detail?.changed ?? "Unavailable").personalText(.secondary, size: 14)
+            if let changed = detail?.changed { Text(changed).personalText(.secondary, size: 14) }
             section("WHY THESE MILES EXIST")
-            Text(detail?.decision ?? "Unavailable").personalText(.secondary, size: 14)
+            if let decision = detail?.decision { Text(decision).personalText(.secondary, size: 14) }
             if let decisionId = detail?.decisionId {
                 gold("View decision details") { onOpenDecision(decisionId) }
-            } else {
-                Text("View decision details").personalText(.secondary, size: 14)
-                Text("Unavailable").personalText(.secondary, size: 13)
             }
         }
     }
 
     private var reportBody: some View {
         VStack(alignment: .leading, spacing: PersonalSpace.s12) {
-            Text(summary.reportYear ?? "Unavailable").personalText(.secondary, size: 14)
+            if let year = summary.reportYear { Text(year).personalText(.secondary, size: 14) }
             Text("Your M.I.L.E.").personalText(.primary, size: 16, weight: .bold)
-            Text(summary.reportLine ?? "Unavailable").personalText(.secondary, size: 14)
-            Text(summary.reportDistance ?? "Unavailable").personalText(.primary, size: 16, weight: .bold)
+            if let line = summary.reportLine { Text(line).personalText(.secondary, size: 14) }
+            if let distance = summary.reportDistance { Text(distance).personalText(.primary, size: 16, weight: .bold) }
             Text("MILES travelled this year").personalText(.secondary, size: 13)
-            Text(summary.reportImpact ?? "Unavailable").personalText(.secondary, size: 14)
+            if let impact = summary.reportImpact { Text(impact).personalText(.secondary, size: 14) }
             section("YOUR YEAR IN NUMBERS")
-            ForEach(["Money protected", "Debt reduced", "Money saved", "Wealth built", "Decisions carried through", "Missions advanced", "Milestones reached"], id: \.self) { label in
+            ForEach(Array(summary.reportNumbers.enumerated()), id: \.offset) { _, row in
                 HStack {
-                    Text(label).personalText(.secondary, size: 14)
+                    Text(row.label).personalText(.secondary, size: 14)
                     Spacer()
-                    Text("Unavailable").personalText(.primary, size: 14, weight: .bold)
+                    Text(row.value ?? "0").personalText(.primary, size: 14, weight: .bold)
                 }
             }
             section("BIGGEST EVOLUTION")
-            Text("Unavailable").personalText(.secondary, size: 14)
+            if let evolution = summary.reportEvolution { Text(evolution).personalText(.secondary, size: 14) }
         }
     }
 
@@ -480,17 +520,23 @@ struct MileSheetsView: View {
         VStack(alignment: .leading, spacing: PersonalSpace.s12) {
             Text("Your Financial Journey").personalText(.primary, size: 16, weight: .bold)
             Text(summary.lifetimeLine ?? "Your financial evolution doesn't reset each year. It keeps building.").personalText(.secondary, size: 14)
-            Text(summary.lifetimeDistance ?? "Unavailable").personalText(.primary, size: 16, weight: .bold)
+            if let distance = summary.lifetimeDistance { Text(distance).personalText(.primary, size: 16, weight: .bold) }
             Text("Lifetime MILES").personalText(.secondary, size: 13)
-            Text(summary.lifetimeImpact ?? "Unavailable").personalText(.secondary, size: 14)
+            if let impact = summary.lifetimeImpact { Text(impact).personalText(.secondary, size: 14) }
             section("DISTANCE BY YEAR")
-            Text("Unavailable").personalText(.secondary, size: 14)
-            section("WHAT BUILT YOUR DISTANCE")
-            ForEach(["Safety & resilience", "Debt & commitments", "Saving & cash flow", "Wealth building"], id: \.self) { label in
+            ForEach(Array(summary.lifetimeYears.enumerated()), id: \.offset) { _, row in
                 HStack {
-                    Text(label).personalText(.secondary, size: 14)
+                    Text(row.label).personalText(.secondary, size: 14)
                     Spacer()
-                    Text("Unavailable").personalText(.primary, size: 14, weight: .bold)
+                    Text(row.value ?? "0").personalText(.primary, size: 14, weight: .bold)
+                }
+            }
+            section("WHAT BUILT YOUR DISTANCE")
+            ForEach(Array(summary.lifetimeBuilt.enumerated()), id: \.offset) { _, row in
+                HStack {
+                    Text(row.label).personalText(.secondary, size: 14)
+                    Spacer()
+                    Text(row.value ?? "0").personalText(.primary, size: 14, weight: .bold)
                 }
             }
         }
@@ -498,7 +544,7 @@ struct MileSheetsView: View {
 
     private func stat(_ value: String?, _ label: String) -> some View {
         VStack(alignment: .leading, spacing: PersonalSpace.s8) {
-            Text(value ?? "Unavailable").personalText(.primary, size: 14, weight: .bold)
+            if let value { Text(value).personalText(.primary, size: 14, weight: .bold) }
             Text(label).personalText(.secondary, size: 12)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

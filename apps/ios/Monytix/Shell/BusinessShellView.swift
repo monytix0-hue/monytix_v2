@@ -174,7 +174,12 @@ private struct Chrome: View {
                     stack: $missionStack,
                     api: api,
                     token: { force in await session.idToken(forceRefresh: force) },
-                    missionId: missionId
+                    missionId: missionId,
+                    onStarted: {
+                        missionStack = []
+                        missionPage = .home
+                        Task { await store.refreshMissions() }
+                    }
                 ) {
                     destination = .mile
                     resetMissions()

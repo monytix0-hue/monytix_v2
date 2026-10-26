@@ -588,14 +588,74 @@ export class PgFinance implements FinanceWriter {
       const result = await client.query<MissionRow>(
         `SELECT m.mission_id::text, m.owner_id::text, d.canonical_mission_code, m.title, m.state,
                 m.origin_type, m.target_definition,
-                COALESCE(m.current_progress_inr, 0)::float8 AS current_progress_inr
+                COALESCE(m.current_progress_inr, 0)::float8 AS current_progress_inr,
+                d.category, d.measurement_basis, d.product_need_class
          FROM action.mission m
          JOIN ref.mission_definition d ON d.mission_definition_version_id = m.canonical_mission_definition_version_id
-         WHERE m.owner_id = $1 AND m.state IN ('ACTIVE', 'PAUSED')
+         WHERE m.owner_id = $1 AND m.state IN ('ACTIVE', 'PAUSED', 'COMPLETED')
          ORDER BY d.canonical_mission_code ASC, m.created_at DESC`,
         [ownerId],
       );
       return result.rows;
+    });
+  }
+
+  async missionDefinition(code: string): Promise<Record<string, unknown> | null> {
+    const result = await this.pool.query<{ doc: Record<string, unknown> | null }>(
+      `SELECT ops.phone_mission_definition($1) AS doc`,
+      [code],
+    );
+    return result.rows[0]?.doc ?? null;
+  }
+
+  async createMission(input: { owner_id: string; canonical_mission_code: string; reach_amount: number; current_amount: number }): Promise<{ mission_id: string } | null> {
+    return this.withOwner(input.owner_id, async (client) => {
+      const result = await client.query<{ id: string | null }>(
+        `SELECT ops.create_user_mission($1::uuid, $2, $3, $4)::text AS id`,
+        [input.owner_id, input.canonical_mission_code, input.reach_amount, input.current_amount],
+      );
+      const id = result.rows[0]?.id;
+      return id ? { mission_id: id } : null;
+    });
+  }
+
+  async addMissionProgress(input: { owner_id: string; mission_id: string; amount: number; note: string | null; idempotency_key: string }): Promise<Record<string, unknown> | null> {
+    return this.withOwner(input.owner_id, async (client) => {
+      const result = await client.query<{ saved: Record<string, unknown> | null }>(
+        `SELECT ops.add_mission_progress($1::uuid, $2::uuid, $3, $4, $5) AS saved`,
+        [input.owner_id, input.mission_id, input.amount, input.note, input.idempotency_key],
+      );
+      return result.rows[0]?.saved ?? null;
+    });
+  }
+
+  async missionDetail(ownerId: string, missionId: string): Promise<Record<string, unknown> | null> {
+    return this.withOwner(ownerId, async (client) => {
+      const result = await client.query<{ doc: Record<string, unknown> | null }>(
+        `SELECT ops.phone_mission_detail($1::uuid, $2::uuid) AS doc`,
+        [ownerId, missionId],
+      );
+      return result.rows[0]?.doc ?? null;
+    });
+  }
+
+  async missionJournal(ownerId: string, missionId: string): Promise<Record<string, unknown> | null> {
+    return this.withOwner(ownerId, async (client) => {
+      const result = await client.query<{ doc: Record<string, unknown> | null }>(
+        `SELECT ops.phone_mission_journal($1::uuid, $2::uuid) AS doc`,
+        [ownerId, missionId],
+      );
+      return result.rows[0]?.doc ?? null;
+    });
+  }
+
+  async missionCompletion(ownerId: string, missionId: string): Promise<Record<string, unknown> | null> {
+    return this.withOwner(ownerId, async (client) => {
+      const result = await client.query<{ doc: Record<string, unknown> | null }>(
+        `SELECT ops.phone_mission_completion($1::uuid, $2::uuid) AS doc`,
+        [ownerId, missionId],
+      );
+      return result.rows[0]?.doc ?? null;
     });
   }
 
@@ -830,6 +890,36 @@ export class PgFinance implements FinanceWriter {
           occurred_at: row.occurred_at,
         })),
       };
+    });
+  }
+
+  async mileSummary(ownerId: string): Promise<Record<string, unknown>> {
+    return this.withOwner(ownerId, async (client) => {
+      const result = await client.query<{ doc: Record<string, unknown> }>(
+        "SELECT ops.phone_mile_summary($1::uuid) AS doc",
+        [ownerId],
+      );
+      return result.rows[0]?.doc ?? { contract: "mile-summary-v0.1", empty_state: true };
+    });
+  }
+
+  async listMileEvents(ownerId: string): Promise<Record<string, unknown>> {
+    return this.withOwner(ownerId, async (client) => {
+      const result = await client.query<{ doc: Record<string, unknown> }>(
+        "SELECT ops.phone_mile_events($1::uuid) AS doc",
+        [ownerId],
+      );
+      return result.rows[0]?.doc ?? { contract: "mile-events-v0.1", events: [] };
+    });
+  }
+
+  async mileEvent(ownerId: string, eventId: string): Promise<Record<string, unknown> | null> {
+    return this.withOwner(ownerId, async (client) => {
+      const result = await client.query<{ doc: Record<string, unknown> | null }>(
+        "SELECT ops.phone_mile_event($1::uuid, $2::uuid) AS doc",
+        [ownerId, eventId],
+      );
+      return result.rows[0]?.doc ?? null;
     });
   }
 

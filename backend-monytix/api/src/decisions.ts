@@ -79,6 +79,9 @@ export type MissionRow = {
   target_definition: Record<string, unknown>;
   current_progress_inr?: number;
   idempotency_key?: string;
+  category?: string | null;
+  measurement_basis?: string | null;
+  product_need_class?: string | null;
 };
 
 /** First PRIMARY orbit by mission code for families that PROMOTE can produce. */

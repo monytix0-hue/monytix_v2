@@ -1,4 +1,5 @@
 import type { DecisionRow, MissionRow } from "./decisions.js";
+import { MISSION_FACTS } from "./mission-catalog.js";
 import type { JourneyItem, RewardsSummary } from "./outcomes.js";
 
 const WEIGHT_NAMES: Record<string, string> = {
@@ -162,6 +163,107 @@ export function decisionsReadModel(items: DecisionRow[]) {
       avoided_postponed_count: 0,
     },
     empty_state: items.length === 0,
+  };
+}
+
+function money(amount: number): string {
+  return rupees(amount) ?? "₹0";
+}
+
+export function missionProgressLabel(item: MissionRow): string {
+  const current = Number(item.current_progress_inr || 0);
+  const target = Number(item.target_definition?.default_target_inr || 0);
+  if (item.state === "COMPLETED") return "Complete";
+  if (target > 0) return `${money(current)} of ${money(target)}`;
+  if (current > 0) return money(current);
+  return "Started";
+}
+
+function missionLine(item: MissionRow): string | null {
+  return item.measurement_basis || MISSION_FACTS[item.canonical_mission_code]?.basis || item.category || null;
+}
+
+export function phoneMissions(items: MissionRow[]) {
+  const cards = items.map((item) => {
+    const current = Number(item.current_progress_inr || 0);
+    const target = Number(item.target_definition?.default_target_inr || 0);
+    const fraction = target > 0 ? Math.min(1, current / target) : current > 0 ? 1 : 0;
+    return {
+      id: item.mission_id,
+      title: item.title,
+      line: missionLine(item),
+      progress: missionProgressLabel(item),
+      state: item.state === "COMPLETED" ? "completed" : "active",
+      progress_fraction: fraction,
+      category: item.category || MISSION_FACTS[item.canonical_mission_code]?.category || null,
+    };
+  });
+  const active = cards.filter((card) => card.state === "active");
+  const completed = cards.filter((card) => card.state === "completed");
+  const pills = [...new Set(active.map((card) => card.category).filter((name): name is string => Boolean(name)))];
+  return {
+    contract: "ui-missions-v0.1" as const,
+    empty_state: cards.length === 0,
+    active_mission_count: active.length,
+    summary: {
+      available: active.length > 0,
+      headline: active.length === 1 ? active[0]?.title ?? null : active.length > 1 ? `${active.length} missions` : null,
+      line: active.length > 0 ? "The things you have chosen to make happen." : null,
+      pills,
+    },
+    active: active.map((card) => ({
+      id: card.id,
+      title: card.title,
+      line: card.line,
+      progress: card.progress,
+      state: card.state,
+      progress_fraction: card.progress_fraction,
+    })),
+    completed: completed.map((card) => ({
+      id: card.id,
+      title: card.title,
+      line: card.line,
+      progress: card.progress,
+      state: card.state,
+      progress_fraction: card.progress_fraction,
+    })),
+  };
+}
+
+export function missionDefinitionDocument(code: string) {
+  const fact = MISSION_FACTS[code];
+  if (!fact) return null;
+  return {
+    code,
+    title: fact.title,
+    category: fact.category,
+    basis: fact.basis,
+    weights: fact.weights,
+    decisions: fact.decisions,
+    build: fact.build,
+  };
+}
+
+export function missionDetailDocument(item: MissionRow, recent: string | null) {
+  const fact = MISSION_FACTS[item.canonical_mission_code];
+  const progress = missionProgressLabel(item);
+  const changed = item.state === "COMPLETED" ? "The target you set has been reached." : "Progress is still short of the reach amount.";
+  const unlocks = `Keep building this the way you already chose. ${item.product_need_class || fact?.build || fact?.basis || ""}`.trim();
+  return {
+    mission: {
+      id: item.mission_id,
+      title: item.title,
+      line: missionLine(item),
+      progress,
+      state: item.state === "COMPLETED" ? "completed" : "active",
+      matters: fact?.basis || missionLine(item),
+      impact: progress,
+      intelligence: (fact?.weights || []).join(" · ") || null,
+      recent: recent || "No progress recorded yet.",
+      changed,
+      proof: progress,
+      unlocks,
+    },
   };
 }
 

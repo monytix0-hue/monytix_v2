@@ -7,6 +7,7 @@ export const FINANCE_PROXY_PREFIXES = [
   "/v1/ui/decisions",
   "/v1/ui/missions",
   "/v1/ui/rewards",
+  "/v1/mile",
   "/v1/ui/journey",
   "/v1/decisions",
   "/v1/missions",

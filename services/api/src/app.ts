@@ -181,7 +181,7 @@ export async function buildApp(options: BuildOptions = {}): Promise<FastifyInsta
   await app.register(accountsRoutes);
   await app.register(transactionsRoutes, { manual: manualTransactions, categories: categoryChoices });
   await app.register(ledgerRoutes, { ledger });
-  await app.register(liveRoutes, { ledger });
+  await app.register(liveRoutes, { ledger, databaseUrl: options.databaseUrl });
 
   // When FINANCE_BACKEND_URL is set, proxy imports + Decision OS to :8090 and skip local import/stub routes.
   const financeUrl = options.financeBackendUrl?.trim() || "";
@@ -200,8 +200,8 @@ export async function buildApp(options: BuildOptions = {}): Promise<FastifyInsta
       databaseUrl: options.databaseUrl,
     });
     await app.register(decisionsRoutes, { databaseUrl: options.databaseUrl });
-    await app.register(missionsRoutes);
-    await app.register(mileRoutes);
+    await app.register(missionsRoutes, { databaseUrl: options.databaseUrl });
+    await app.register(mileRoutes, { databaseUrl: options.databaseUrl });
   }
 
   await app.register(sourcesRoutes);

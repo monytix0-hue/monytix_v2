@@ -43,7 +43,7 @@ private let missionDirections: [MissionDirection] = [
     ]),
     MissionDirection(name: "Reduce Debt", line: "Cards · loans · commitments", focus: "Pay Off a Personal Loan Faster", prompt: "Choose the debt outcome you want to work toward.", missions: [
         CatalogMission(name: "Clear Credit-Card Debt", code: "M07"),
-        CatalogMission(name: "Reduce Debt", code: "M08"),
+        CatalogMission(name: "Pay Off a Personal Loan Faster", code: "M08"),
         CatalogMission(name: "Reduce Home-Loan Burden", code: "M09"),
         CatalogMission(name: "Reduce EMI Pressure", code: "M10"),
         CatalogMission(name: "Cut Recurring Commitments", code: "M11"),
@@ -52,7 +52,7 @@ private let missionDirections: [MissionDirection] = [
     MissionDirection(name: "Save for Something", line: "Home · vehicle · education", focus: "Build an Education Fund", prompt: "Choose what you want to prepare and save for.", missions: [
         CatalogMission(name: "Build a Home Fund", code: "M13"),
         CatalogMission(name: "Save for a Vehicle", code: "M14"),
-        CatalogMission(name: "Save for Something", code: "M15"),
+        CatalogMission(name: "Build an Education Fund", code: "M15"),
         CatalogMission(name: "Save for a Wedding", code: "M16"),
         CatalogMission(name: "Build a Travel Fund", code: "M17"),
         CatalogMission(name: "Fund a Major Purchase", code: "M18"),
@@ -61,7 +61,7 @@ private let missionDirections: [MissionDirection] = [
         CatalogMission(name: "Start Investing Regularly", code: "M19"),
         CatalogMission(name: "Increase My SIP", code: "M20"),
         CatalogMission(name: "Put Idle Cash to Work", code: "M21"),
-        CatalogMission(name: "Build Wealth", code: "M22"),
+        CatalogMission(name: "Build a Long-Term Corpus", code: "M22"),
         CatalogMission(name: "Keep My Portfolio Balanced", code: "M23"),
         CatalogMission(name: "Build My Retirement Corpus", code: "M24"),
     ]),
@@ -70,7 +70,7 @@ private let missionDirections: [MissionDirection] = [
         CatalogMission(name: "Control Shopping Spend", code: "M26"),
         CatalogMission(name: "Reduce Entertainment Spend", code: "M27"),
         CatalogMission(name: "Keep Travel Spending Under Control", code: "M28"),
-        CatalogMission(name: "Improve Spending", code: "M29"),
+        CatalogMission(name: "Reduce Discretionary Spending", code: "M29"),
         CatalogMission(name: "Stop Financial Leakage", code: "M30"),
     ]),
     MissionDirection(name: "Improve Cash Flow", line: "Salary · surplus · large expenses", focus: "Increase My Savings Rate", prompt: "Choose the cash-flow outcome you want to improve.", missions: [
@@ -79,7 +79,7 @@ private let missionDirections: [MissionDirection] = [
         CatalogMission(name: "Avoid a Cash Crunch", code: "M33"),
         CatalogMission(name: "Prepare for a Large Upcoming Expense", code: "M34"),
         CatalogMission(name: "Use a Bonus or Windfall Better", code: "M35"),
-        CatalogMission(name: "Improve Cash Flow", code: "M36"),
+        CatalogMission(name: "Increase My Savings Rate", code: "M36"),
     ]),
     MissionDirection(name: "Support Life & Family", line: "Children · parents · healthcare", focus: "Support Life & Family", prompt: "Choose the life or family outcome you want to prepare for.", missions: [
         CatalogMission(name: "Build a Fund for My Children", code: "M37"),
@@ -109,6 +109,7 @@ private struct MissionRow: Identifiable {
     let title: String?
     let line: String?
     let progress: String?
+    let fraction: Double
 }
 
 private struct MissionList {
@@ -127,17 +128,48 @@ private struct MissionList {
         return MissionList(
             headline: ready ? summary?["headline"] as? String : nil,
             summaryLine: ready ? summary?["line"] as? String : nil,
-            pills: ready ? (summary?["pills"] as? [String] ?? []) : [],
+            pills: ready ? stringList(summary?["pills"]) : [],
             active: missionRows(root["active"]),
             completed: missionRows(root["completed"])
         )
     }
 }
 
+private func stringList(_ value: Any?) -> [String] {
+    (value as? [Any] ?? []).compactMap { $0 as? String }
+}
+
 private func missionRows(_ value: Any?) -> [MissionRow] {
     (value as? [[String: Any]] ?? []).compactMap { row in
         guard let id = row["id"] as? String, !id.isEmpty else { return nil }
-        return MissionRow(id: id, title: row["title"] as? String, line: row["line"] as? String, progress: row["progress"] as? String)
+        return MissionRow(
+            id: id,
+            title: row["title"] as? String,
+            line: row["line"] as? String,
+            progress: row["progress"] as? String,
+            fraction: min(max((row["progress_fraction"] as? NSNumber)?.doubleValue ?? 0, 0), 1)
+        )
+    }
+}
+
+private struct MissionSetup {
+    var title: String?
+    var basis: String?
+    var build: String?
+    var weights: [String] = []
+    var decisions: [String] = []
+
+    static func parse(_ data: Data?) -> MissionSetup {
+        guard let data, let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return MissionSetup()
+        }
+        return MissionSetup(
+            title: root["title"] as? String,
+            basis: root["basis"] as? String,
+            build: root["build"] as? String,
+            weights: stringList(root["weights"]),
+            decisions: stringList(root["decisions"])
+        )
     }
 }
 
@@ -145,6 +177,7 @@ private struct MissionRecord {
     var title: String?
     var line: String?
     var progress: String?
+    var state: String?
     var matters: String?
     var impact: String?
     var intelligence: String?
@@ -152,6 +185,7 @@ private struct MissionRecord {
     var changed: String?
     var proof: String?
     var unlocks: String?
+    var since: String?
     var entries: [(String?, String?)] = []
 
     static func detail(_ data: Data?) -> MissionRecord {
@@ -163,6 +197,7 @@ private struct MissionRecord {
             title: mission["title"] as? String,
             line: mission["line"] as? String,
             progress: mission["progress"] as? String,
+            state: mission["state"] as? String,
             matters: mission["matters"] as? String,
             impact: mission["impact"] as? String,
             intelligence: mission["intelligence"] as? String,
@@ -184,79 +219,83 @@ struct MissionHomeView: View {
     }
 
     var body: some View {
-        let pills = list.pills.isEmpty ? ["Unavailable", "Unavailable"] : list.pills
         ScrollView {
             VStack(alignment: .leading, spacing: PersonalSpace.s20) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Missions").personalText(.primary, size: 22, weight: .bold)
                     Text("The things you’ve chosen to make happen.").personalText(.secondary, size: 15)
                 }
-                card {
-                    Text(list.summaryLine ?? "Unavailable").personalText(.secondary, size: 13)
-                    Text(list.headline ?? "Unavailable").personalText(.primary, size: 16, weight: .bold)
-                    Text("working toward your goals").personalText(.secondary, size: 15)
-                    HStack(spacing: PersonalSpace.s8) {
-                        ForEach(Array(pills.enumerated()), id: \.offset) { _, name in
-                            pill(name)
+                if list.active.isEmpty {
+                    Text("Nothing is active yet.").personalText(.secondary, size: 15)
+                } else {
+                    card {
+                        if let line = list.summaryLine {
+                            Text(line).personalText(.secondary, size: 13)
+                        }
+                        Text(list.headline ?? "Active missions").personalText(.primary, size: 16, weight: .bold)
+                        if !list.pills.isEmpty {
+                            HStack(spacing: PersonalSpace.s8) {
+                                ForEach(Array(list.pills.enumerated()), id: \.offset) { _, name in
+                                    pill(name)
+                                }
+                            }
                         }
                     }
-                }
-                Text("ACTIVE")
-                    .font(.custom("Inter-ExtraBold", size: 13))
-                    .foregroundStyle(eyebrow)
-                if list.active.isEmpty {
-                    activeCard(nil, icon: "FigShieldPlus") {}
-                } else {
+                    Text("ACTIVE")
+                        .font(.custom("Inter-ExtraBold", size: 13))
+                        .foregroundStyle(eyebrow)
                     ForEach(Array(list.active.enumerated()), id: \.element.id) { index, row in
                         activeCard(row, icon: missionIcon(index)) { onActive(row.id) }
                     }
                 }
-                Button(action: {
-                    if let id = list.completed.first?.id { onCompleted(id) }
-                }) {
-                    HStack(spacing: PersonalSpace.s8) {
-                        FigIcon(name: "FigCashCheck", size: 18)
-                        Text("Completed Missions").personalText(.primary, size: 15, weight: .bold)
+                if let completed = list.completed.first {
+                    Button { onCompleted(completed.id) } label: {
+                        HStack(spacing: PersonalSpace.s8) {
+                            FigIcon(name: "FigCashCheck", size: 18)
+                            Text("Completed Missions").personalText(.primary, size: 15, weight: .bold)
+                        }
+                        .frame(maxWidth: .infinity)
                     }
-                    .frame(maxWidth: .infinity)
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
-                .disabled(list.completed.isEmpty)
                 gold("Create a Mission", action: onCreate)
             }
             .padding(.horizontal, PersonalSpace.s20)
             .padding(.top, PersonalSpace.s20)
             .padding(.bottom, 128)
         }
-        .task {
-            if !store.missionsReady {
-                await store.refreshMissions()
-            }
-        }
+        .task { await store.refreshMissions() }
     }
 
     private func missionIcon(_ index: Int) -> String {
         ["FigShieldPlus", "FigMissionEmblem", "FigUtensils"][index % 3]
     }
 
-    private func activeCard(_ row: MissionRow?, icon: String, action: @escaping () -> Void) -> some View {
+    private func activeCard(_ row: MissionRow, icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             card {
                 HStack(spacing: PersonalSpace.s12) {
                     FigIcon(name: icon, size: 48)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(row?.title ?? "Unavailable").personalText(.primary, size: 16, weight: .bold)
-                        Text(row?.line ?? "Unavailable").personalText(.secondary, size: 14)
+                        Text(row.title ?? "Mission").personalText(.primary, size: 16, weight: .bold)
+                        Text(row.line ?? "In progress").personalText(.secondary, size: 14)
                     }
                     Spacer()
-                    Text(row?.progress ?? "Unavailable").personalText(.primary, size: 16, weight: .bold)
+                    Text(row.progress ?? "Started").personalText(.primary, size: 16, weight: .bold)
                 }
-                Capsule().fill(palette.border).frame(height: 8)
-                Text(row?.line ?? "Unavailable").personalText(.secondary, size: 13)
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(palette.border)
+                        Capsule().fill(PersonalTokens.action.default).frame(width: max(8, geo.size.width * row.fraction))
+                    }
+                }
+                .frame(height: 8)
+                if let line = row.line {
+                    Text(line).personalText(.secondary, size: 13)
+                }
             }
         }
         .buttonStyle(.plain)
-        .disabled(row == nil)
     }
 
     private func card<Content: View>(@ViewBuilder content: () -> Content) -> some View {
@@ -361,9 +400,17 @@ struct MissionSheetsView: View {
     var api: MonytixApi
     var token: (Bool) async -> String?
     var missionId: String
+    var onStarted: () -> Void
     var onOpenMile: () -> Void
     @Environment(\.colorScheme) private var colorScheme
     @State private var record = MissionRecord()
+    @State private var setup = MissionSetup()
+    @State private var currentAmount = ""
+    @State private var reachAmount = ""
+    @State private var progressAmount = ""
+    @State private var progressNote = ""
+    @State private var ownWords = ""
+    @State private var posting = false
 
     var body: some View {
         Group {
@@ -396,28 +443,8 @@ struct MissionSheetsView: View {
             }
             }
         }
-        .task(id: missionId) {
-            guard !missionId.isEmpty else {
-                record = MissionRecord()
-                return
-            }
-            let detail = await api.getJSON(path: "/v1/ui/missions/\(missionId)", token: token)
-            var next = MissionRecord.detail(detail)
-            if let journal = await api.getJSON(path: "/v1/ui/missions/\(missionId)/journal", token: token),
-               let root = try? JSONSerialization.jsonObject(with: journal) as? [String: Any],
-               let entries = root["entries"] as? [[String: Any]] {
-                next.entries = entries.map { ($0["title"] as? String, $0["detail"] as? String) }
-            }
-            if let completion = await api.getJSON(path: "/v1/ui/missions/\(missionId)/completion", token: token),
-               let root = try? JSONSerialization.jsonObject(with: completion) as? [String: Any],
-               let mission = root["mission"] as? [String: Any] {
-                next.title = next.title ?? (mission["title"] as? String)
-                next.changed = mission["changed"] as? String
-                next.proof = mission["proof"] as? String
-                next.unlocks = mission["unlocks"] as? String
-            }
-            record = next
-        }
+        .task(id: missionId) { await loadMission() }
+        .task(id: setupName) { await loadSetup() }
     }
 
     @ViewBuilder
@@ -451,27 +478,36 @@ struct MissionSheetsView: View {
                 .buttonStyle(.plain)
             }
         case .setup(let name):
-            Text(name).personalText(.primary, size: 16, weight: .bold)
+            Text(setup.title ?? name).personalText(.primary, size: 16, weight: .bold)
             Text("A few details help Monytix understand what progress means.").personalText(.secondary, size: 15)
             Text("YOUR TARGET").font(.custom("Inter-ExtraBold", size: 13)).foregroundStyle(eyebrow)
-            Text("Unavailable").personalText(.primary, size: 16, weight: .bold)
             HStack(spacing: PersonalSpace.s12) {
-                card { Text("Current").personalText(.secondary, size: 13); Text("Unavailable").personalText(.primary, size: 15, weight: .bold) }
-                card { Text("Reach").personalText(.secondary, size: 13); Text("Unavailable").personalText(.primary, size: 15, weight: .bold) }
+                amountField("Current", text: $currentAmount)
+                amountField("Reach", text: $reachAmount)
             }
             Text("How Monytix understands this").personalText(.primary, size: 16, weight: .bold)
-            Text("Unavailable").personalText(.secondary, size: 15)
-            HStack(spacing: PersonalSpace.s8) { pill("Unavailable"); pill("Unavailable"); pill("Unavailable") }
-            Text("Related decisions  Unavailable").personalText(.secondary, size: 13)
+            Text(setup.basis ?? "Choose a reach amount.").personalText(.secondary, size: 15)
+            if !setup.weights.isEmpty {
+                HStack(spacing: PersonalSpace.s8) {
+                    ForEach(setup.weights, id: \.self) { pill($0) }
+                }
+            }
+            if !setup.decisions.isEmpty {
+                Text("Related decisions  \(setup.decisions.joined(separator: " · "))").personalText(.secondary, size: 13)
+            }
             Text("HOW DO YOU WANT TO BUILD IT?").font(.custom("Inter-ExtraBold", size: 13)).foregroundStyle(eyebrow)
-            Text("Unavailable").personalText(.primary, size: 16, weight: .bold)
+            Text(setup.build ?? "Use what you already have.").personalText(.primary, size: 16, weight: .bold)
             Text("You can change this anytime.").personalText(.secondary, size: 13)
-            gold("Start Mission") {}
+            gold("Start Mission", enabled: reachValue != nil && !posting) {
+                Task { await startMission(named: name) }
+            }
         case .detail:
-            Text(record.line ?? "Unavailable").personalText(.secondary, size: 14)
-            HStack(spacing: PersonalSpace.s8) { pill(record.progress ?? "Unavailable"); pill("Unavailable") }
-            Text(record.title ?? "Unavailable").personalText(.primary, size: 16, weight: .bold)
-            Text(record.line ?? "Unavailable").personalText(.secondary, size: 15)
+            if let line = record.line { Text(line).personalText(.secondary, size: 14) }
+            HStack(spacing: PersonalSpace.s8) {
+                pill(record.progress ?? "Started")
+                pill(record.state == "completed" ? "Complete" : "Active")
+            }
+            Text(record.title ?? "Mission").personalText(.primary, size: 16, weight: .bold)
             block("WHAT MATTERS NOW", record.matters)
             block("M.I.L.E. IMPACT", record.impact)
             block("CONNECTED INTELLIGENCE", record.intelligence)
@@ -483,25 +519,38 @@ struct MissionSheetsView: View {
             link("Mission complete") { push(.complete) }
             gold("Add progress") { push(.progress) }
         case .progress:
-            block("HOW MUCH PROGRESS?")
-            block("WHERE DID THIS COME FROM?")
-            block("IF YOU ADD THIS")
+            Text("HOW MUCH PROGRESS?").font(.custom("Inter-ExtraBold", size: 13)).foregroundStyle(eyebrow)
+            amountField("Amount", text: $progressAmount)
+            Text("WHERE DID THIS COME FROM?").font(.custom("Inter-ExtraBold", size: 13)).foregroundStyle(eyebrow)
+            Text("You are recording progress on \(record.title ?? "this mission").").personalText(.secondary, size: 15)
+            Text("IF YOU ADD THIS").font(.custom("Inter-ExtraBold", size: 13)).foregroundStyle(eyebrow)
+            Text(record.progress ?? "Started").personalText(.primary, size: 16, weight: .bold)
             Text("NOTE · OPTIONAL").font(.custom("Inter-ExtraBold", size: 13)).foregroundStyle(eyebrow)
-            composer("Add a note")
-            gold("Add progress") {}
+            TextField("Add a note", text: $progressNote, axis: .vertical)
+                .font(.custom("Inter-Regular", size: 15))
+                .foregroundStyle(palette.textPrimary)
+                .padding(PersonalSpace.s16)
+                .background(palette.surface, in: RoundedRectangle(cornerRadius: PersonalRadius.action, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: PersonalRadius.action, style: .continuous).stroke(palette.border, lineWidth: 1))
+            gold("Add progress", enabled: progressValue != nil && !posting) {
+                Task { await addProgress() }
+            }
         case .milestone:
-            block("VERIFIED IMPACT")
-            block("WHY THIS COUNTS")
-            block("NEXT MARKER")
+            block("VERIFIED IMPACT", record.recent)
+            block("WHY THIS COUNTS", record.matters)
+            block("NEXT MARKER", record.state == "completed" ? "Target reached" : "Keep going toward the reach amount")
             gold("Continue Mission", action: pop)
         case .history:
-            block("SINCE YOU STARTED")
+            block("SINCE YOU STARTED", record.since ?? record.progress)
             Text("TIMELINE").font(.custom("Inter-ExtraBold", size: 13)).foregroundStyle(eyebrow)
-            let shown = record.entries.isEmpty ? Array(repeating: (nil as String?, nil as String?), count: 4) : record.entries
-            ForEach(Array(shown.enumerated()), id: \.offset) { _, entry in
-                card {
-                    Text(entry.0 ?? "Unavailable").personalText(.primary, size: 15, weight: .bold)
-                    Text(entry.1 ?? "Unavailable").personalText(.secondary, size: 13)
+            if record.entries.isEmpty {
+                Text("No progress recorded yet.").personalText(.secondary, size: 15)
+            } else {
+                ForEach(Array(record.entries.enumerated()), id: \.offset) { _, entry in
+                    card {
+                        Text(entry.0 ?? "Progress").personalText(.primary, size: 15, weight: .bold)
+                        Text(entry.1 ?? "Progress recorded").personalText(.secondary, size: 13)
+                    }
                 }
             }
             Text("Every MILE can be traced back to real progress.").personalText(.secondary, size: 14)
@@ -514,16 +563,22 @@ struct MissionSheetsView: View {
                 onOpenMile()
             }
         case .completed:
-            Text(record.line ?? "Unavailable").personalText(.secondary, size: 14)
-            pill(record.progress ?? "Unavailable")
-            Text(record.title ?? "Unavailable").personalText(.primary, size: 16, weight: .bold)
-            block("MISSION RECORD")
-            block("INTELLIGENCE RECORD")
-            block("IMPACT TRACE")
+            if let line = record.line { Text(line).personalText(.secondary, size: 14) }
+            pill(record.progress ?? "Complete")
+            Text(record.title ?? "Mission").personalText(.primary, size: 16, weight: .bold)
+            block("MISSION RECORD", record.title)
+            block("INTELLIGENCE RECORD", record.intelligence)
+            block("IMPACT TRACE", record.impact)
             link("View full history") { push(.history) }
         case .somethingElse:
             Text("Tell Monytix in your own words").personalText(.secondary, size: 15)
-            composer("Describe what you want to make happen")
+            Text("This note stays on this screen. It does not create a new mission.").personalText(.secondary, size: 13)
+            TextField("Describe what you want to make happen", text: $ownWords, axis: .vertical)
+                .font(.custom("Inter-Regular", size: 15))
+                .foregroundStyle(palette.textPrimary)
+                .padding(PersonalSpace.s16)
+                .background(palette.surface, in: RoundedRectangle(cornerRadius: PersonalRadius.action, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: PersonalRadius.action, style: .continuous).stroke(palette.border, lineWidth: 1))
         }
     }
 
@@ -531,7 +586,6 @@ struct MissionSheetsView: View {
         Button { push(.setup(mission.name)) } label: {
             card {
                 Text(mission.name).personalText(.primary, size: 14, weight: .bold)
-                Text("\(mission.code) · Canonical Mission").personalText(.secondary, size: 12)
             }
         }
         .buttonStyle(.plain)
@@ -540,7 +594,7 @@ struct MissionSheetsView: View {
     private func title(_ step: MissionStep) -> String {
         switch step {
         case .options, .setup, .somethingElse: "Create a Mission"
-        case .detail, .completed: record.title ?? "Unavailable"
+        case .detail, .completed: record.title ?? "Mission"
         case .progress: "Add progress"
         case .milestone: "A milestone reached"
         case .history: "Mission history"
@@ -555,11 +609,101 @@ struct MissionSheetsView: View {
         stack.append(step)
     }
 
+    private var setupName: String {
+        if case .setup(let name) = stack.last { return name }
+        return ""
+    }
+
+    private var reachValue: Double? { Double(reachAmount.replacingOccurrences(of: ",", with: "")) }
+    private var progressValue: Double? { Double(progressAmount.replacingOccurrences(of: ",", with: "")) }
+
+    private func loadMission() async {
+        guard !missionId.isEmpty else {
+            record = MissionRecord()
+            return
+        }
+        let detail = await api.getJSON(path: "/v1/ui/missions/\(missionId)", token: token)
+        var next = MissionRecord.detail(detail)
+        if let journal = await api.getJSON(path: "/v1/ui/missions/\(missionId)/journal", token: token),
+           let root = try? JSONSerialization.jsonObject(with: journal) as? [String: Any] {
+            next.since = root["since"] as? String
+            if let entries = root["entries"] as? [[String: Any]] {
+                next.entries = entries.map { ($0["title"] as? String, $0["detail"] as? String) }
+            }
+        }
+        if let completion = await api.getJSON(path: "/v1/ui/missions/\(missionId)/completion", token: token),
+           let root = try? JSONSerialization.jsonObject(with: completion) as? [String: Any],
+           let mission = root["mission"] as? [String: Any] {
+            next.title = next.title ?? (mission["title"] as? String)
+            next.changed = mission["changed"] as? String
+            next.proof = mission["proof"] as? String
+            next.unlocks = mission["unlocks"] as? String
+        }
+        record = next
+    }
+
+    private func loadSetup() async {
+        guard let code = missionDirections.flatMap(\.missions).first(where: { $0.name == setupName })?.code else {
+            setup = MissionSetup()
+            return
+        }
+        setup = MissionSetup.parse(await api.getJSON(path: "/v1/ui/missions/definitions/\(code)", token: token))
+    }
+
+    private func startMission(named name: String) async {
+        guard let reach = reachValue,
+              let code = missionDirections.flatMap(\.missions).first(where: { $0.name == name })?.code else { return }
+        posting = true
+        defer { posting = false }
+        let current = Double(currentAmount.replacingOccurrences(of: ",", with: "")) ?? 0
+        let body: [String: Any] = ["canonical_mission_code": code, "reach_amount": reach, "current_amount": current]
+        guard let data = try? JSONSerialization.data(withJSONObject: body) else { return }
+        let result = await api.submit(method: "POST", path: "/v1/missions", body: data, idempotencyKey: "mission-create-\(code)", token: token)
+        if (200..<300).contains(result.status) { onStarted() }
+    }
+
+    private func addProgress() async {
+        guard let amount = progressValue, !missionId.isEmpty else { return }
+        posting = true
+        defer { posting = false }
+        var body: [String: Any] = ["action": "ADD_PROGRESS", "amount": amount]
+        if !progressNote.isEmpty { body["note"] = progressNote }
+        guard let data = try? JSONSerialization.data(withJSONObject: body) else { return }
+        let result = await api.submit(
+            method: "POST",
+            path: "/v1/missions/\(missionId)/actions",
+            body: data,
+            idempotencyKey: "mission-progress-\(missionId)-\(UUID().uuidString)",
+            token: token
+        )
+        if (200..<300).contains(result.status) {
+            progressAmount = ""
+            progressNote = ""
+            await loadMission()
+            pop()
+        }
+    }
+
+    private func amountField(_ label: String, text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: PersonalSpace.s8) {
+            Text(label).personalText(.secondary, size: 13)
+            TextField("0", text: text)
+                .keyboardType(.decimalPad)
+                .font(.custom("Inter-Bold", size: 15))
+                .foregroundStyle(palette.textPrimary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(PersonalSpace.s16)
+        .background(palette.surface, in: RoundedRectangle(cornerRadius: PersonalRadius.card, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: PersonalRadius.card, style: .continuous).stroke(palette.border, lineWidth: 1))
+    }
+
     private func block(_ title: String, _ value: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: PersonalSpace.s8) {
             Text(title).font(.custom("Inter-ExtraBold", size: 13)).foregroundStyle(eyebrow)
-            Text(value ?? "Unavailable").personalText(.primary, size: 16, weight: .bold)
-            Text("Unavailable").personalText(.secondary, size: 15)
+            if let value, !value.isEmpty {
+                Text(value).personalText(.primary, size: 16, weight: .bold)
+            }
         }
     }
 
@@ -575,24 +719,16 @@ struct MissionSheetsView: View {
         .buttonStyle(.plain)
     }
 
-    private func gold(_ label: String, action: @escaping () -> Void) -> some View {
+    private func gold(_ label: String, enabled: Bool = true, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(label)
                 .font(.custom("Inter-Bold", size: 15))
                 .foregroundStyle(PersonalTokens.action.label)
                 .frame(maxWidth: .infinity, minHeight: 48)
-                .background(PersonalTokens.action.default, in: RoundedRectangle(cornerRadius: PersonalRadius.action, style: .continuous))
+                .background(PersonalTokens.action.default.opacity(enabled ? 1 : 0.4), in: RoundedRectangle(cornerRadius: PersonalRadius.action, style: .continuous))
         }
         .buttonStyle(.plain)
-    }
-
-    private func composer(_ hint: String) -> some View {
-        Text(hint)
-            .personalText(.secondary, size: 15)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(PersonalSpace.s16)
-            .background(palette.surface, in: RoundedRectangle(cornerRadius: PersonalRadius.action, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: PersonalRadius.action, style: .continuous).stroke(palette.border, lineWidth: 1))
+        .disabled(!enabled)
     }
 
     private func card<Content: View>(@ViewBuilder content: () -> Content) -> some View {

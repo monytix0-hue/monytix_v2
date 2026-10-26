@@ -27,6 +27,7 @@ import {
   metaEnvelope,
   missionsReadModel,
   phoneDecisions,
+  phoneMissions,
   rewardsReadModel,
 } from "./ui-read-models.js";
 import type { IntelligenceClient } from "./worker.js";
@@ -691,7 +692,91 @@ export function createApp(deps: BuildDeps): FastifyInstance {
   app.get("/v1/ui/missions", async (request) => {
     const ownerId = requireOwner(request, request.server);
     const items = await deps.finance.listMissions(ownerId);
-    return { meta: metaEnvelope(request.id), data: missionsReadModel(items) };
+    return { meta: metaEnvelope(request.id), data: missionsReadModel(items), ...phoneMissions(items) };
+  });
+
+  app.get("/v1/ui/missions/definitions/:code", async (request, reply) => {
+    const code = (request.params as { code: string }).code;
+    const definition = await deps.finance.missionDefinition(code);
+    if (!definition) return reply.status(404).send({ error: "not_found" });
+    return definition;
+  });
+
+  app.get("/v1/ui/missions/:missionId", async (request, reply) => {
+    const ownerId = requireOwner(request, reply);
+    const missionId = (request.params as { missionId: string }).missionId;
+    const detail = await deps.finance.missionDetail(ownerId, missionId);
+    if (!detail) return reply.status(404).send({ error: "not_found" });
+    return detail;
+  });
+
+  app.get("/v1/ui/missions/:missionId/journal", async (request, reply) => {
+    const ownerId = requireOwner(request, reply);
+    const missionId = (request.params as { missionId: string }).missionId;
+    const journal = await deps.finance.missionJournal(ownerId, missionId);
+    if (!journal) return reply.status(404).send({ error: "not_found" });
+    return journal;
+  });
+
+  app.get("/v1/ui/missions/:missionId/completion", async (request, reply) => {
+    const ownerId = requireOwner(request, reply);
+    const missionId = (request.params as { missionId: string }).missionId;
+    const completion = await deps.finance.missionCompletion(ownerId, missionId);
+    if (!completion) return reply.status(404).send({ error: "not_found" });
+    return completion;
+  });
+
+  app.post("/v1/missions", async (request, reply) => {
+    const ownerId = requireOwner(request, reply);
+    const body = request.body as { canonical_mission_code?: string; reach_amount?: number; current_amount?: number } | null;
+    const code = body?.canonical_mission_code;
+    const reach = Number(body?.reach_amount);
+    if (!code || !Number.isFinite(reach) || reach <= 0) return reply.status(400).send({ error: "invalid_request" });
+    const created = await deps.finance.createMission({
+      owner_id: ownerId,
+      canonical_mission_code: code,
+      reach_amount: reach,
+      current_amount: Number(body?.current_amount) || 0,
+    });
+    if (!created) return reply.status(404).send({ error: "not_found" });
+    return created;
+  });
+
+  app.post("/v1/missions/:missionId/actions", async (request, reply) => {
+    const ownerId = requireOwner(request, reply);
+    const missionId = (request.params as { missionId: string }).missionId;
+    const body = request.body as { action?: string; amount?: number; note?: string } | null;
+    if (body?.action !== "ADD_PROGRESS") return reply.status(400).send({ error: "invalid_request" });
+    const amount = Number(body.amount);
+    if (!Number.isFinite(amount) || amount <= 0) return reply.status(400).send({ error: "invalid_request" });
+    const idempotencyKey = headerValue(request.headers["idempotency-key"]) || `mission-progress:${missionId}:${amount}:${body.note || ""}`;
+    const saved = await deps.finance.addMissionProgress({
+      owner_id: ownerId,
+      mission_id: missionId,
+      amount,
+      note: body.note ?? null,
+      idempotency_key: idempotencyKey,
+    });
+    if (!saved) return reply.status(404).send({ error: "not_found" });
+    return saved;
+  });
+
+  app.get("/v1/mile/summary", async (request) => {
+    const ownerId = requireOwner(request, request.server);
+    return deps.finance.mileSummary(ownerId);
+  });
+
+  app.get("/v1/mile/events", async (request) => {
+    const ownerId = requireOwner(request, request.server);
+    return deps.finance.listMileEvents(ownerId);
+  });
+
+  app.get("/v1/mile/events/:eventId", async (request, reply) => {
+    const ownerId = requireOwner(request, reply);
+    const eventId = (request.params as { eventId: string }).eventId;
+    const doc = await deps.finance.mileEvent(ownerId, eventId);
+    if (!doc) return reply.status(404).send({ error: "not_found" });
+    return doc;
   });
 
   app.get("/v1/ui/rewards", async (request) => {

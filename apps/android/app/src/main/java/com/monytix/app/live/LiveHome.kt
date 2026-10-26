@@ -85,7 +85,7 @@ fun LiveHome(
             Enter(195) { Attention(onOpen) }
             Enter(260) { Cash(snapshot, onOpen) }
             Enter(325) { Pulse(onOpen) }
-            Enter(390) { Mile(onViewMile) }
+            Enter(390) { Mile(snapshot, onViewMile) }
         }
     }
 }
@@ -171,32 +171,30 @@ private fun Welcome(snapshot: LiveSnapshot, onOpen: (LivePage) -> Unit) {
 private fun Missions(snapshot: LiveSnapshot, onViewMissions: () -> Unit) {
     val theme = LocalPersonalTheme.current
     GoalCard {
-        CardHeading("MISSIONS")
-        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-            ProgressRing(snapshot.activeMission?.progress ?: Unavailable)
-            Text(snapshot.activeMission?.line ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
-            Text(
-                Unavailable,
-                modifier = Modifier.padding(top = PersonalSpace.s8),
-                color = theme.palette.textSecondary,
-                fontFamily = theme.fontFamily,
-                fontSize = 13.sp,
-            )
-        }
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(PersonalRadius.inset))
-                .background(theme.palette.mission)
-                .padding(PersonalSpace.s16),
-            horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s12),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            FigIcon(R.drawable.fig_orbit_halo_sm, 36.dp)
-            Column(verticalArrangement = Arrangement.spacedBy(PersonalSpace.s8)) {
-            Text(snapshot.activeMission?.title ?: Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-            Text(snapshot.activeMission?.line ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
-            Text(snapshot.activeMission?.progress ?: Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+        CardHeading("MISSIONS", pill = false)
+        val mission = snapshot.activeMission
+        if (mission == null) {
+            Text("Nothing is active yet.", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
+        } else {
+            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                ProgressRing(mission.progress ?: "Started")
+                mission.line?.let { Text(it, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp) }
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(PersonalRadius.inset))
+                    .background(theme.palette.mission)
+                    .padding(PersonalSpace.s16),
+                horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s12),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                FigIcon(R.drawable.fig_orbit_halo_sm, 36.dp)
+                Column(verticalArrangement = Arrangement.spacedBy(PersonalSpace.s8)) {
+                    Text(mission.title ?: "Mission", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    mission.line?.let { Text(it, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp) }
+                    mission.progress?.let { Text(it, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp) }
+                }
             }
         }
         GoldButton("View Missions  →", onViewMissions)
@@ -294,7 +292,7 @@ private fun Pulse(onOpen: (LivePage) -> Unit) {
 }
 
 @Composable
-private fun Mile(onViewMile: () -> Unit) {
+private fun Mile(snapshot: LiveSnapshot, onViewMile: () -> Unit) {
     val theme = LocalPersonalTheme.current
     GradientCard(
         listOf(theme.palette.widgetImpactStart, theme.palette.widgetImpactEnd),
@@ -308,11 +306,17 @@ private fun Mile(onViewMile: () -> Unit) {
             fontSize = 13.sp,
         )
         Text("Money Impact & Life Evolution", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
-        Text(Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-        Text("positive financial impact", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
-        Row(horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s8)) {
-            StatusPill()
-            StatusPill()
+        val mile = snapshot.mile
+        if (mile == null) {
+            Text("Nothing has been recorded yet.", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
+        } else {
+            mile.impact?.let { Text(it, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp) }
+            mile.line?.let { Text(it, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp) }
+            if (mile.pills.isNotEmpty()) {
+                Row(horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s8)) {
+                    mile.pills.forEach { StatusPill(it) }
+                }
+            }
         }
         GoldButton("See your M.I.L.E.  →", onViewMile)
     }
@@ -324,11 +328,11 @@ private fun eyebrowColor() = with(LocalPersonalTheme.current) {
 }
 
 @Composable
-private fun CardHeading(title: String) {
+private fun CardHeading(title: String, pill: Boolean = true) {
     val theme = LocalPersonalTheme.current
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
         Text(title, color = eyebrowColor(), fontFamily = theme.fontFamily, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
-        StatusPill()
+        if (pill) StatusPill()
     }
 }
 

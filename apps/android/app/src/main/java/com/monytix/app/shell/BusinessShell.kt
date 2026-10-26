@@ -259,6 +259,11 @@ fun BusinessShell(
                     missionId = missionId,
                     stack = missionStack,
                     onChange = { missionStack = it },
+                    onStarted = {
+                        missionStack = emptyList()
+                        missionPage = MissionPage.Home
+                        scope.launch { store.refreshMissions() }
+                    },
                     onOpenMile = {
                         destination = Destination.Mile
                         resetMissions()

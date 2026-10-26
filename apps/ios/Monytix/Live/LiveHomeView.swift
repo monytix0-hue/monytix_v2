@@ -23,6 +23,12 @@ struct ActiveMission: Equatable {
     var progress: String?
 }
 
+struct LiveMile: Equatable {
+    var impact: String?
+    var line: String?
+    var pills: [String] = []
+}
+
 struct LiveSnapshot: Equatable {
     var recordedFlowAvailable = false
     var currencies: [RecordedCurrency] = []
@@ -32,6 +38,7 @@ struct LiveSnapshot: Equatable {
     var previewsKnown = false
     var previews: [RecordedPreview] = []
     var activeMission: ActiveMission?
+    var mile: LiveMile? = nil
 
     static let unavailable = LiveSnapshot()
 
@@ -78,6 +85,14 @@ struct LiveSnapshot: Equatable {
                 progress: mission?["progress"] as? String
             )
             : nil
+        let mileObject = root["mile"] as? [String: Any]
+        let mile: LiveMile? = (mileObject?["available"] as? Bool) == true
+            ? LiveMile(
+                impact: mileObject?["impact"] as? String,
+                line: mileObject?["line"] as? String,
+                pills: (mileObject?["pills"] as? [Any] ?? []).compactMap { $0 as? String }
+            )
+            : nil
         return LiveSnapshot(
             recordedFlowAvailable: (flow?["available"] as? Bool) == true && !currencies.isEmpty,
             currencies: currencies,
@@ -86,7 +101,8 @@ struct LiveSnapshot: Equatable {
             availableBalance: balanceText,
             previewsKnown: previewRows != nil,
             previews: previews,
-            activeMission: activeMission
+            activeMission: activeMission,
+            mile: mile
         )
     }
 }
@@ -181,24 +197,33 @@ struct LiveHomeView: View {
 
     private var missions: some View {
         gradientCard(goalColors, goalBorder) {
-            cardHeading("MISSIONS")
-            VStack(spacing: PersonalSpace.s8) {
-                progressRing(snapshot.activeMission?.progress ?? "Unavailable")
-                Text(snapshot.activeMission?.line ?? "Unavailable").personalText(.secondary, size: 14)
-                Text("Unavailable").personalText(.secondary, size: 13)
-            }
-            .frame(maxWidth: .infinity)
-            HStack(spacing: PersonalSpace.s12) {
-                FigIcon(name: "FigOrbitHaloSm", size: 36)
-                VStack(alignment: .leading, spacing: PersonalSpace.s8) {
-                Text(snapshot.activeMission?.title ?? "Unavailable").personalText(.primary, size: 14, weight: .bold)
-                Text(snapshot.activeMission?.line ?? "Unavailable").personalText(.secondary, size: 13)
-                Text(snapshot.activeMission?.progress ?? "Unavailable").personalText(.secondary, size: 13)
+            cardHeading("MISSIONS", pill: false)
+            if let mission = snapshot.activeMission {
+                VStack(spacing: PersonalSpace.s8) {
+                    progressRing(mission.progress ?? "Started")
+                    if let line = mission.line {
+                        Text(line).personalText(.secondary, size: 14)
+                    }
                 }
+                .frame(maxWidth: .infinity)
+                HStack(spacing: PersonalSpace.s12) {
+                    FigIcon(name: "FigOrbitHaloSm", size: 36)
+                    VStack(alignment: .leading, spacing: PersonalSpace.s8) {
+                        Text(mission.title ?? "Mission").personalText(.primary, size: 14, weight: .bold)
+                        if let line = mission.line {
+                            Text(line).personalText(.secondary, size: 13)
+                        }
+                        if let progress = mission.progress {
+                            Text(progress).personalText(.secondary, size: 13)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(PersonalSpace.s16)
+                .background(palette.mission, in: RoundedRectangle(cornerRadius: PersonalRadius.inset, style: .continuous))
+            } else {
+                Text("Nothing is active yet.").personalText(.secondary, size: 15)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(PersonalSpace.s16)
-            .background(palette.mission, in: RoundedRectangle(cornerRadius: PersonalRadius.inset, style: .continuous))
             goldButton("View Missions  →") { onViewMissions() }
         }
     }
@@ -288,23 +313,32 @@ struct LiveHomeView: View {
                 .font(.custom("Inter-ExtraBold", size: 13))
                 .foregroundStyle(eyebrow)
             Text("Money Impact & Life Evolution").personalText(.secondary, size: 13)
-            Text("Unavailable").personalText(.primary, size: 16, weight: .bold)
-            Text("positive financial impact").personalText(.secondary, size: 15)
-            HStack(spacing: PersonalSpace.s8) {
-                statusPill("Unavailable")
-                statusPill("Unavailable")
+            if let mile = snapshot.mile {
+                if let impact = mile.impact {
+                    Text(impact).personalText(.primary, size: 16, weight: .bold)
+                }
+                if let line = mile.line {
+                    Text(line).personalText(.secondary, size: 15)
+                }
+                if !mile.pills.isEmpty {
+                    HStack(spacing: PersonalSpace.s8) {
+                        ForEach(mile.pills, id: \.self) { statusPill($0) }
+                    }
+                }
+            } else {
+                Text("Nothing has been recorded yet.").personalText(.secondary, size: 15)
             }
             goldButton("See your M.I.L.E.  →") { onViewMile() }
         }
     }
 
-    private func cardHeading(_ title: String) -> some View {
+    private func cardHeading(_ title: String, pill: Bool = true) -> some View {
         HStack {
             Text(title)
                 .font(.custom("Inter-ExtraBold", size: 13))
                 .foregroundStyle(eyebrow)
             Spacer()
-            statusPill("Unavailable")
+            if pill { statusPill("Unavailable") }
         }
     }
 

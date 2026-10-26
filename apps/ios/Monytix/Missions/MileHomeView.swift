@@ -291,7 +291,6 @@ struct MileHomeView: View {
             .padding(.top, PersonalSpace.s20)
             .padding(.bottom, 128)
         }
-        .task { await store.refreshMile() }
     }
 
     private func mileIcon(_ index: Int) -> String {
@@ -360,8 +359,7 @@ struct MileHomeView: View {
 
 struct MileSheetsView: View {
     @Binding var stack: [MileStep]
-    var api: MonytixApi
-    var token: (Bool) async -> String?
+    var store: UiSessionStore
     var outcomeId: String
     var eventId: String
     var onOutcome: (String) -> Void
@@ -410,8 +408,12 @@ struct MileSheetsView: View {
                 .background(palette.sheet, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
             }
             .task(id: eventId) {
-                summary = MileSummary.parse(await api.getJSON(path: "/v1/mile/summary", token: token))
-                detail = eventId.isEmpty ? nil : trace(await api.getJSON(path: "/v1/mile/events/\(eventId)", token: token))
+                summary = MileSummary.parse(store.mileSummaryData)
+                detail = eventId.isEmpty ? nil : trace(store.mileTrace(eventId))
+            }
+            .onChange(of: store.mileSummaryData) {
+                summary = MileSummary.parse(store.mileSummaryData)
+                detail = eventId.isEmpty ? nil : trace(store.mileTrace(eventId))
             }
         }
     }

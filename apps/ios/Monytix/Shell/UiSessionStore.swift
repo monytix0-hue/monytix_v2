@@ -1,8 +1,7 @@
 import Foundation
 import Observation
 
-/// Session-scoped UI snapshots. Prefetched after sign-in so tab remounts render
-/// immediately instead of empty-then-fetch on every pill tap.
+/// Session-scoped UI snapshots. One bootstrap load fills every tab and its sheets.
 @Observable
 @MainActor
 final class UiSessionStore {
@@ -11,7 +10,10 @@ final class UiSessionStore {
 
     private(set) var liveData: Data?
     private(set) var decisionsData: Data?
+    private(set) var decisionScreensData: Data?
     private(set) var missionsData: Data?
+    private(set) var missionScreensData: Data?
+    private(set) var missionDefinitionsData: Data?
     private(set) var mileSummaryData: Data?
     private(set) var mileEventsData: Data?
 
@@ -26,50 +28,83 @@ final class UiSessionStore {
     }
 
     func prefetch() async {
-        async let live: Void = refreshLive()
-        async let decisions: Void = refreshDecisions()
-        async let missions: Void = refreshMissions()
-        async let mile: Void = refreshMile()
-        _ = await (live, decisions, missions, mile)
+        guard let data = await api.getJSON(path: "/v1/ui/bootstrap", token: token),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            markReady()
+            return
+        }
+        liveData = jsonData(root["live"])
+        decisionsData = jsonData(root["decisions"])
+        decisionScreensData = jsonData(root["decision_screens"])
+        missionsData = jsonData(root["missions"])
+        missionScreensData = jsonData(root["mission_screens"])
+        missionDefinitionsData = jsonData(root["mission_definitions"])
+        mileSummaryData = jsonData(root["mile_summary"])
+        mileEventsData = jsonData(root["mile_events"])
+        markReady()
     }
 
-    func refreshLive() async {
-        liveData = await api.getJSON(path: "/v1/ui/live", token: token)
-        liveReady = true
+    func decisionScreen(_ id: String) -> Data? {
+        slice(decisionScreensData, id)
     }
 
-    func refreshDecisions() async {
-        decisionsData = await api.getJSON(path: "/v1/ui/decisions", token: token)
-        decisionsReady = true
+    func missionScreen(_ id: String) -> (detail: Data?, journal: Data?, completion: Data?) {
+        guard let screen = object(missionScreensData)?[id] as? [String: Any] else {
+            return (nil, nil, nil)
+        }
+        return (jsonData(screen["detail"]), jsonData(screen["journal"]), jsonData(screen["completion"]))
     }
 
-    func refreshMissions() async {
-        missionsData = await api.getJSON(path: "/v1/ui/missions", token: token)
-        missionsReady = true
+    func missionDefinition(_ code: String) -> Data? {
+        slice(missionDefinitionsData, code)
     }
 
-    func refreshMile() async {
-        async let summary = api.getJSON(path: "/v1/mile/summary", token: token)
-        async let events = api.getJSON(path: "/v1/mile/events", token: token)
-        mileSummaryData = await summary
-        mileEventsData = await events
-        mileReady = true
+    func mileTrace(_ id: String) -> Data? {
+        guard let rows = object(mileEventsData)?["events"] as? [[String: Any]],
+              let event = rows.first(where: { $0["id"] as? String == id }) else {
+            return nil
+        }
+        return jsonData(["event": event])
     }
 
     func invalidateAfterImport() async {
-        await refreshLive()
-        await refreshMissions()
+        await prefetch()
     }
 
     func clear() {
         liveData = nil
         decisionsData = nil
+        decisionScreensData = nil
         missionsData = nil
+        missionScreensData = nil
+        missionDefinitionsData = nil
         mileSummaryData = nil
         mileEventsData = nil
         liveReady = false
         decisionsReady = false
         missionsReady = false
         mileReady = false
+    }
+
+    private func markReady() {
+        liveReady = true
+        decisionsReady = true
+        missionsReady = true
+        mileReady = true
+    }
+
+    private func object(_ data: Data?) -> [String: Any]? {
+        guard let data else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
+    private func slice(_ data: Data?, _ key: String) -> Data? {
+        guard let value = object(data)?[key] else { return nil }
+        return jsonData(value)
+    }
+
+    private func jsonData(_ value: Any?) -> Data? {
+        guard let value, JSONSerialization.isValidJSONObject(value) else { return nil }
+        return try? JSONSerialization.data(withJSONObject: value)
     }
 }

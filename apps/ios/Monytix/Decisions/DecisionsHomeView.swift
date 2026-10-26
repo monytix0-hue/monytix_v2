@@ -271,7 +271,6 @@ struct DecisionHomeView: View {
             .padding(.top, PersonalSpace.s20)
             .padding(.bottom, 128)
         }
-        .task { await store.refreshDecisions() }
     }
 
     private var emptyFilter: String {
@@ -358,6 +357,7 @@ struct DecisionHomeView: View {
 struct DecisionFlowView: View {
     var page: DecisionPage
     var decisionId: String
+    var store: UiSessionStore
     var api: MonytixApi
     var token: (Bool) async -> String?
     var onBack: () -> Void
@@ -365,7 +365,6 @@ struct DecisionFlowView: View {
     var onConfirm: () -> Void
     var onSave: () -> Void
     @Environment(\.colorScheme) private var colorScheme
-    @State private var weights = DecisionWeights()
     @State private var selected: Int?
     @State private var reason = ""
     @State private var posting = false
@@ -406,10 +405,11 @@ struct DecisionFlowView: View {
             .padding(.bottom, PersonalSpace.s32)
         }
         .personalCanvas()
-        .task(id: decisionId) {
-            weights = DecisionWeights.parse(await api.getJSON(path: "/v1/ui/decisions/\(decisionId)/weights", token: token))
-            selected = nil
-        }
+        .onChange(of: decisionId) { selected = nil }
+    }
+
+    private var weights: DecisionWeights {
+        DecisionWeights.parse(store.decisionScreen(decisionId))
     }
 
     private var title: String {
@@ -505,13 +505,19 @@ struct DecisionFlowView: View {
             Text("Confirm this decision").personalText(.primary, size: 16, weight: .bold)
             gold("Confirm decision →", enabled: selectedChoice != nil && !posting) {
                 Task {
-                    if await post("ACCEPT") { onConfirm() }
+                    if await post("ACCEPT") {
+                        await store.prefetch()
+                        onConfirm()
+                    }
                 }
             }
             Text("Mark it for later").personalText(.primary, size: 16, weight: .bold)
             gold("Save for later", enabled: !posting) {
                 Task {
-                    if await post("SNOOZE") { onSave() }
+                    if await post("SNOOZE") {
+                        await store.prefetch()
+                        onSave()
+                    }
                 }
             }
         }

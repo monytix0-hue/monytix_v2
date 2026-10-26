@@ -25,7 +25,6 @@ import com.monytix.app.theme.FigIcon
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -70,9 +69,6 @@ fun LiveDetail(
     val snapshot = remember(store.liveJson) {
         val json = store.liveJson
         if (json.isNullOrBlank()) LiveSnapshot.unavailable() else LiveSnapshot.parse(json)
-    }
-    LaunchedEffect(Unit) {
-        store.refreshLive()
     }
     if (page == LivePage.Transactions) {
         TransactionScreen(api, token, onBack)

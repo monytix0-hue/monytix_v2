@@ -26,13 +26,13 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import com.monytix.app.shell.UiSessionStore
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -332,7 +332,6 @@ fun MissionHome(
         val json = store.missionsJson
         if (json.isNullOrBlank()) MissionList.empty() else MissionList.parse(json)
     }
-    LaunchedEffect(Unit) { store.refreshMissions() }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -417,6 +416,7 @@ fun MissionCreate(onBack: () -> Unit, onDirection: (String) -> Unit, onSomething
 
 @Composable
 fun MissionSheets(
+    store: UiSessionStore,
     api: MonytixApi,
     token: suspend (Boolean) -> String?,
     missionId: String,
@@ -427,25 +427,15 @@ fun MissionSheets(
 ) {
     val step = stack.lastOrNull() ?: return
     val theme = LocalPersonalTheme.current
-    var detail by remember { mutableStateOf(MissionDetail.empty()) }
-    var entries by remember { mutableStateOf(emptyList<JournalEntry>()) }
-    var since by remember { mutableStateOf<String?>(null) }
-    var completion by remember { mutableStateOf(MissionCompletion.empty()) }
-    var reload by remember { mutableStateOf(0) }
-    LaunchedEffect(missionId, reload) {
-        if (missionId.isBlank()) {
-            detail = MissionDetail.empty()
-            entries = emptyList()
-            since = null
-            completion = MissionCompletion.empty()
-            return@LaunchedEffect
-        }
-        val journalJson = api.getJson("/v1/ui/missions/$missionId/journal", token)
-        detail = MissionDetail.parse(api.getJson("/v1/ui/missions/$missionId", token))
-        entries = journal(journalJson)
-        since = journalSince(journalJson)
-        completion = MissionCompletion.parse(api.getJson("/v1/ui/missions/$missionId/completion", token))
-    }
+    val scope = rememberCoroutineScope()
+    val screen = store.missionScreen(missionId)
+    val detailJson = screen?.optJSONObject("detail")?.toString()
+    val journalJson = screen?.optJSONObject("journal")?.toString()
+    val completionJson = screen?.optJSONObject("completion")?.toString()
+    val detail = if (missionId.isBlank()) MissionDetail.empty() else MissionDetail.parse(detailJson)
+    val entries = if (missionId.isBlank()) emptyList() else journal(journalJson)
+    val since = if (missionId.isBlank()) null else journalSince(journalJson)
+    val completion = if (missionId.isBlank()) MissionCompletion.empty() else MissionCompletion.parse(completionJson)
     fun pop() { onChange(stack.dropLast(1)) }
     fun push(next: MissionStep) { onChange(stack + next) }
     fun replace(next: MissionStep) { onChange(stack.dropLast(1) + next) }
@@ -471,9 +461,14 @@ fun MissionSheets(
             }
             when (step) {
                 is MissionStep.Options -> OptionsBody(step.direction, onMission = { push(MissionStep.Setup(it)) }, onDirection = { replace(MissionStep.Options(it)) }, onBack = ::pop)
-                is MissionStep.Setup -> SetupBody(api, token, step.name, onStarted)
+                is MissionStep.Setup -> SetupBody(store, api, token, step.name, onStarted)
                 MissionStep.Detail -> DetailBody(detail, onProgress = { push(MissionStep.Progress) }, onHistory = { push(MissionStep.History) }, onMilestone = { push(MissionStep.Milestone) }, onComplete = { push(MissionStep.Complete) })
-                MissionStep.Progress -> ProgressBody(api, token, missionId, detail) { reload += 1; pop() }
+                MissionStep.Progress -> ProgressBody(api, token, missionId, detail) {
+                    scope.launch {
+                        store.prefetch()
+                        pop()
+                    }
+                }
                 MissionStep.Milestone -> MilestoneBody(detail, ::pop)
                 MissionStep.History -> HistoryBody(since ?: detail.progress, entries)
                 MissionStep.Complete -> CompleteBody(completion) {
@@ -515,17 +510,14 @@ private fun OptionsBody(directionName: String, onMission: (String) -> Unit, onDi
 }
 
 @Composable
-private fun SetupBody(api: MonytixApi, token: suspend (Boolean) -> String?, name: String, onStarted: () -> Unit) {
+private fun SetupBody(store: UiSessionStore, api: MonytixApi, token: suspend (Boolean) -> String?, name: String, onStarted: () -> Unit) {
     val theme = LocalPersonalTheme.current
     val scope = rememberCoroutineScope()
     val code = directions.flatMap { it.missions }.firstOrNull { it.name == name }?.code
-    var setup by remember(name) { mutableStateOf(MissionSetup.empty()) }
     var current by remember(name) { mutableStateOf("") }
     var reach by remember(name) { mutableStateOf("") }
     var posting by remember { mutableStateOf(false) }
-    LaunchedEffect(code) {
-        setup = if (code == null) MissionSetup.empty() else MissionSetup.parse(api.getJson("/v1/ui/missions/definitions/$code", token))
-    }
+    val setup = if (code == null) MissionSetup.empty() else MissionSetup.parse(store.missionDefinition(code))
     Text(setup.title ?: name, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
     Text("A few details help Monytix understand what progress means.", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
     Text("YOUR TARGET", color = eyebrow(), fontFamily = theme.fontFamily, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)

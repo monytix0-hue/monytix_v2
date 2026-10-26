@@ -63,9 +63,6 @@ fun LiveHome(
         val json = store.liveJson
         if (json.isNullOrBlank()) LiveSnapshot.unavailable() else LiveSnapshot.parse(json)
     }
-    LaunchedEffect(Unit) {
-        store.refreshLive()
-    }
     PersonalTheme {
         val theme = LocalPersonalTheme.current
         Column(

@@ -64,9 +64,6 @@ struct LiveDetailView: View {
             }
         }
         .personalCanvas()
-        .task {
-            await store.refreshLive()
-        }
     }
 
     private var copy: (String, String) {

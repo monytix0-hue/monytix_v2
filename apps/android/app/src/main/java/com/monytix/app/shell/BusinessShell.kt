@@ -237,6 +237,7 @@ fun BusinessShell(
                 DecisionFlow(
                     page = decisionPage,
                     decisionId = decisionId,
+                    store = store,
                     api = api,
                     token = token,
                     onBack = {
@@ -254,6 +255,7 @@ fun BusinessShell(
             }
             if (destination == Destination.Missions && missionStack.isNotEmpty()) {
                 MissionSheets(
+                    store = store,
                     api = api,
                     token = token,
                     missionId = missionId,
@@ -262,10 +264,7 @@ fun BusinessShell(
                     onStarted = {
                         missionStack = emptyList()
                         missionPage = MissionPage.Home
-                        scope.launch {
-                            store.refreshMissions()
-                            store.refreshLive()
-                        }
+                        scope.launch { store.prefetch() }
                     },
                     onOpenMile = {
                         destination = Destination.Mile
@@ -276,8 +275,7 @@ fun BusinessShell(
             }
             if (destination == Destination.Mile && mileStack.isNotEmpty()) {
                 MileSheets(
-                    api = api,
-                    token = token,
+                    store = store,
                     stack = mileStack,
                     outcomeId = mileOutcomeId,
                     eventId = mileEventId,

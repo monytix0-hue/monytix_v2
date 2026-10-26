@@ -23,11 +23,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -36,7 +32,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.monytix.app.R
-import com.monytix.app.auth.MonytixApi
 import com.monytix.app.shell.UiSessionStore
 import com.monytix.app.theme.FigIcon
 import com.monytix.app.theme.LocalPersonalTheme
@@ -241,7 +236,6 @@ fun MileHome(
 ) {
     val summary = remember(store.mileSummaryJson) { MileSummary.parse(store.mileSummaryJson) }
     val recent = remember(store.mileEventsJson) { events(store.mileEventsJson) }
-    LaunchedEffect(Unit) { store.refreshMile() }
     val theme = LocalPersonalTheme.current
     Column(
         modifier = Modifier
@@ -322,8 +316,7 @@ fun MileHome(
 
 @Composable
 fun MileSheets(
-    api: MonytixApi,
-    token: suspend (Boolean) -> String?,
+    store: UiSessionStore,
     stack: List<MileStep>,
     outcomeId: String,
     eventId: String,
@@ -333,12 +326,8 @@ fun MileSheets(
 ) {
     val step = stack.lastOrNull() ?: return
     val theme = LocalPersonalTheme.current
-    var summary by remember { mutableStateOf(MileSummary.empty()) }
-    var detail by remember { mutableStateOf<MileTrace?>(null) }
-    LaunchedEffect(api, eventId) {
-        summary = MileSummary.parse(api.getJson("/v1/mile/summary", token))
-        detail = if (eventId.isBlank()) null else trace(api.getJson("/v1/mile/events/$eventId", token))
-    }
+    val summary = MileSummary.parse(store.mileSummaryJson)
+    val detail = if (eventId.isBlank()) null else trace(store.mileTrace(eventId))
     val outcome = summary.outcomes.firstOrNull { it.id == outcomeId }
     fun pop() { onChange(stack.dropLast(1)) }
     Box(Modifier.fillMaxSize()) {

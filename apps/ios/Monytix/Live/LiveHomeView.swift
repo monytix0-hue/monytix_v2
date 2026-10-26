@@ -179,9 +179,6 @@ struct LiveHomeView: View {
         }
         .personalCanvas()
         .personalTheme()
-        .task {
-            await store.refreshLive()
-        }
     }
 
     private var welcome: some View {

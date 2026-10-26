@@ -72,6 +72,7 @@ private struct Chrome: View {
                 DecisionFlowView(
                     page: decisionPage,
                     decisionId: decisionId,
+                    store: store,
                     api: api,
                     token: { force in await session.idToken(forceRefresh: force) },
                     onBack: {
@@ -172,16 +173,14 @@ private struct Chrome: View {
             if destination == .missions, !missionStack.isEmpty {
                 MissionSheetsView(
                     stack: $missionStack,
+                    store: store,
                     api: api,
                     token: { force in await session.idToken(forceRefresh: force) },
                     missionId: missionId,
                     onStarted: {
                         missionStack = []
                         missionPage = .home
-                        Task {
-                            await store.refreshMissions()
-                            await store.refreshLive()
-                        }
+                        Task { await store.prefetch() }
                     }
                 ) {
                     destination = .mile
@@ -192,8 +191,7 @@ private struct Chrome: View {
             if destination == .mile, !mileStack.isEmpty {
                 MileSheetsView(
                     stack: $mileStack,
-                    api: api,
-                    token: { force in await session.idToken(forceRefresh: force) },
+                    store: store,
                     outcomeId: mileOutcomeId,
                     eventId: mileEventId,
                     onOutcome: {

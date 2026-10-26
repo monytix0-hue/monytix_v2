@@ -264,7 +264,6 @@ struct MissionHomeView: View {
             .padding(.top, PersonalSpace.s20)
             .padding(.bottom, 128)
         }
-        .task { await store.refreshMissions() }
     }
 
     private func missionIcon(_ index: Int) -> String {
@@ -397,6 +396,7 @@ struct MissionCreateView: View {
 
 struct MissionSheetsView: View {
     @Binding var stack: [MissionStep]
+    var store: UiSessionStore
     var api: MonytixApi
     var token: (Bool) async -> String?
     var missionId: String
@@ -443,8 +443,9 @@ struct MissionSheetsView: View {
             }
             }
         }
-        .task(id: missionId) { await loadMission() }
-        .task(id: setupName) { await loadSetup() }
+        .task(id: missionId) { loadMission() }
+        .onChange(of: store.missionScreensData) { loadMission() }
+        .task(id: setupName) { loadSetup() }
     }
 
     @ViewBuilder
@@ -617,21 +618,21 @@ struct MissionSheetsView: View {
     private var reachValue: Double? { Double(reachAmount.replacingOccurrences(of: ",", with: "")) }
     private var progressValue: Double? { Double(progressAmount.replacingOccurrences(of: ",", with: "")) }
 
-    private func loadMission() async {
+    private func loadMission() {
         guard !missionId.isEmpty else {
             record = MissionRecord()
             return
         }
-        let detail = await api.getJSON(path: "/v1/ui/missions/\(missionId)", token: token)
-        var next = MissionRecord.detail(detail)
-        if let journal = await api.getJSON(path: "/v1/ui/missions/\(missionId)/journal", token: token),
+        let screen = store.missionScreen(missionId)
+        var next = MissionRecord.detail(screen.detail)
+        if let journal = screen.journal,
            let root = try? JSONSerialization.jsonObject(with: journal) as? [String: Any] {
             next.since = root["since"] as? String
             if let entries = root["entries"] as? [[String: Any]] {
                 next.entries = entries.map { ($0["title"] as? String, $0["detail"] as? String) }
             }
         }
-        if let completion = await api.getJSON(path: "/v1/ui/missions/\(missionId)/completion", token: token),
+        if let completion = screen.completion,
            let root = try? JSONSerialization.jsonObject(with: completion) as? [String: Any],
            let mission = root["mission"] as? [String: Any] {
             next.title = next.title ?? (mission["title"] as? String)
@@ -642,12 +643,12 @@ struct MissionSheetsView: View {
         record = next
     }
 
-    private func loadSetup() async {
+    private func loadSetup() {
         guard let code = missionDirections.flatMap(\.missions).first(where: { $0.name == setupName })?.code else {
             setup = MissionSetup()
             return
         }
-        setup = MissionSetup.parse(await api.getJSON(path: "/v1/ui/missions/definitions/\(code)", token: token))
+        setup = MissionSetup.parse(store.missionDefinition(code))
     }
 
     private func startMission(named name: String) async {
@@ -679,7 +680,8 @@ struct MissionSheetsView: View {
         if (200..<300).contains(result.status) {
             progressAmount = ""
             progressNote = ""
-            await loadMission()
+            await store.prefetch()
+            loadMission()
             pop()
         }
     }

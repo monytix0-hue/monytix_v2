@@ -4,12 +4,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.monytix.app.auth.MonytixApi
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 /**
- * Session-scoped UI snapshots. Prefetched after sign-in so tab remounts render
- * immediately instead of empty-then-fetch on every pill tap.
+ * Session-scoped UI snapshots. One bootstrap load fills every tab and its sheets.
  */
 class UiSessionStore(
     private val api: MonytixApi,
@@ -19,7 +17,13 @@ class UiSessionStore(
         private set
     var decisionsJson by mutableStateOf<String?>(null)
         private set
+    var decisionScreensJson by mutableStateOf<String?>(null)
+        private set
     var missionsJson by mutableStateOf<String?>(null)
+        private set
+    var missionScreensJson by mutableStateOf<String?>(null)
+        private set
+    var missionDefinitionsJson by mutableStateOf<String?>(null)
         private set
     var mileSummaryJson by mutableStateOf<String?>(null)
         private set
@@ -35,55 +39,71 @@ class UiSessionStore(
     var mileReady by mutableStateOf(false)
         private set
 
-    suspend fun prefetch() = coroutineScope {
-        launch { refreshLive() }
-        launch { refreshDecisions() }
-        launch { refreshMissions() }
-        launch { refreshMile() }
-    }
-
-    suspend fun refreshLive() {
-        liveJson = api.getJson("/v1/ui/live", token)
-        liveReady = true
-    }
-
-    suspend fun refreshDecisions() {
-        decisionsJson = api.getJson("/v1/ui/decisions", token)
-        decisionsReady = true
-    }
-
-    suspend fun refreshMissions() {
-        missionsJson = api.getJson("/v1/ui/missions", token)
-        missionsReady = true
-    }
-
-    suspend fun refreshMile() {
-        coroutineScope {
-            launch {
-                mileSummaryJson = api.getJson("/v1/mile/summary", token)
-            }
-            launch {
-                mileEventsJson = api.getJson("/v1/mile/events", token)
-            }
+    suspend fun prefetch() {
+        val json = api.getJson("/v1/ui/bootstrap", token)
+        val root = json?.let { runCatching { JSONObject(it) }.getOrNull() }
+        if (root == null) {
+            markReady()
+            return
         }
-        mileReady = true
+        liveJson = root.optJSONObject("live")?.toString()
+        decisionsJson = root.optJSONObject("decisions")?.toString()
+        decisionScreensJson = root.optJSONObject("decision_screens")?.toString()
+        missionsJson = root.optJSONObject("missions")?.toString()
+        missionScreensJson = root.optJSONObject("mission_screens")?.toString()
+        missionDefinitionsJson = root.optJSONObject("mission_definitions")?.toString()
+        mileSummaryJson = root.optJSONObject("mile_summary")?.toString()
+        mileEventsJson = root.optJSONObject("mile_events")?.toString()
+        markReady()
     }
 
-    /** After statement import / Gmail connect affecting Live. */
+    fun decisionScreen(id: String): String? = objectSlice(decisionScreensJson, id)
+
+    fun missionScreen(id: String): JSONObject? {
+        val screens = missionScreensJson ?: return null
+        return runCatching { JSONObject(screens).optJSONObject(id) }.getOrNull()
+    }
+
+    fun missionDefinition(code: String): String? = objectSlice(missionDefinitionsJson, code)
+
+    fun mileTrace(id: String): String? {
+        val events = mileEventsJson ?: return null
+        val rows = runCatching { JSONObject(events).optJSONArray("events") }.getOrNull() ?: return null
+        for (index in 0 until rows.length()) {
+            val event = rows.optJSONObject(index) ?: continue
+            if (event.optString("id") == id) return JSONObject().put("event", event).toString()
+        }
+        return null
+    }
+
     suspend fun invalidateAfterImport() {
-        refreshLive()
-        refreshMissions()
+        prefetch()
     }
 
     fun clear() {
         liveJson = null
         decisionsJson = null
+        decisionScreensJson = null
         missionsJson = null
+        missionScreensJson = null
+        missionDefinitionsJson = null
         mileSummaryJson = null
         mileEventsJson = null
         liveReady = false
         decisionsReady = false
         missionsReady = false
         mileReady = false
+    }
+
+    private fun markReady() {
+        liveReady = true
+        decisionsReady = true
+        missionsReady = true
+        mileReady = true
+    }
+
+    private fun objectSlice(json: String?, key: String): String? {
+        if (json.isNullOrBlank()) return null
+        return runCatching { JSONObject(json).optJSONObject(key)?.toString() }.getOrNull()
     }
 }

@@ -24,13 +24,13 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import com.monytix.app.shell.UiSessionStore
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
@@ -268,9 +268,6 @@ fun DecisionHome(
         if (json.isNullOrBlank()) DecisionRead.empty() else DecisionRead.parse(json)
     }
     var filter by remember { mutableStateOf(filters.first().second) }
-    LaunchedEffect(Unit) {
-        store.refreshDecisions()
-    }
     val listed = read.decisions.filter { it.state == filter }
     val boardEmpty = read.heaviest == null && read.decisions.isEmpty()
     Column(
@@ -368,6 +365,7 @@ private fun Quiet(message: String) {
 fun DecisionFlow(
     page: DecisionPage,
     decisionId: String,
+    store: UiSessionStore,
     api: MonytixApi,
     token: suspend (Boolean) -> String?,
     onBack: () -> Unit,
@@ -377,15 +375,10 @@ fun DecisionFlow(
 ) {
     val theme = LocalPersonalTheme.current
     val scope = rememberCoroutineScope()
-    var weights by remember { mutableStateOf(DecisionWeights.empty()) }
-    var selected by remember { mutableStateOf<Int?>(null) }
+    val weights = store.decisionScreen(decisionId)?.let { DecisionWeights.parse(it) } ?: DecisionWeights.empty()
+    var selected by remember(decisionId) { mutableStateOf<Int?>(null) }
     var reason by remember { mutableStateOf("") }
     var posting by remember { mutableStateOf(false) }
-    LaunchedEffect(decisionId) {
-        val json = api.getJson("/v1/ui/decisions/$decisionId/weights", token)
-        weights = if (json.isNullOrBlank()) DecisionWeights.empty() else DecisionWeights.parse(json)
-        selected = null
-    }
     val title = when (page) {
         DecisionPage.Weigh -> "Weigh your options"
         DecisionPage.Confirm -> "Mark your decision"
@@ -424,12 +417,18 @@ fun DecisionFlow(
                 onReason = { reason = it },
                 onConfirm = {
                     scope.launch {
-                        if (post(api, token, decisionId, "ACCEPT", choice?.id) { posting = it }) onConfirm()
+                        if (post(api, token, decisionId, "ACCEPT", choice?.id) { posting = it }) {
+                            store.prefetch()
+                            onConfirm()
+                        }
                     }
                 },
                 onSave = {
                     scope.launch {
-                        if (post(api, token, decisionId, "SNOOZE", null) { posting = it }) onSave()
+                        if (post(api, token, decisionId, "SNOOZE", null) { posting = it }) {
+                            store.prefetch()
+                            onSave()
+                        }
                     }
                 },
             )

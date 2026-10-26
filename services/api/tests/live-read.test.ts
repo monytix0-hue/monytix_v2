@@ -260,6 +260,82 @@ test("GET /v1/ui/live leaves balance unavailable when more than one snapshot exi
   await app.close();
 });
 
+test("GET /v1/ui/bootstrap returns every tab from the recorded month and empty boards", async () => {
+  const signed = await signToken({ subject: "ui-bootstrap", expiresIn: "1h" });
+  const app = await buildApp({
+    ...signed.options,
+    ledger: ledger({
+      async overview() {
+        return {
+          from: "2026-10-01",
+          to: "2026-10-31",
+          currencies: [
+            {
+              currency: "INR",
+              inflow: "1500.00",
+              outflow: "400.00",
+              ordinaryOutflow: "400.00",
+              transactionCount: 1,
+              events: [],
+              uses: [],
+              transactionsWithoutEvent: 0,
+              transactionsWithoutUse: 0,
+            },
+          ],
+        };
+      },
+    }),
+  });
+  const response = await app.inject({
+    method: "GET",
+    url: "/v1/ui/bootstrap",
+    headers: {
+      authorization: `Bearer ${signed.token}`,
+      "x-monytix-owner-id": "owner-allowed",
+    },
+  });
+  assert.equal(response.statusCode, 200);
+  const body = response.json() as {
+    contract: string;
+    live: { contract: string; recordedFlow: { available: boolean }; active_missions: unknown[]; decision_cards: { available: boolean }; mile: { available: boolean } };
+    decisions: { empty_state: boolean; decisions: unknown[] };
+    decision_screens: Record<string, unknown>;
+    missions: { empty_state: boolean; active: unknown[] };
+    mission_screens: Record<string, unknown>;
+    mission_definitions: Record<string, unknown>;
+    mile_summary: { empty_state: boolean };
+    mile_events: { events: unknown[] };
+  };
+  assert.equal(body.contract, "ui-bootstrap-v0.1");
+  assert.equal(body.live.contract, "ui-live-v0.1");
+  assert.equal(body.live.recordedFlow.available, true);
+  assert.equal(body.live.active_missions.length, 0);
+  assert.equal(body.live.decision_cards.available, false);
+  assert.equal(body.live.mile.available, false);
+  assert.equal(body.decisions.empty_state, true);
+  assert.equal(body.decisions.decisions.length, 0);
+  assert.deepEqual(body.decision_screens, {});
+  assert.equal(body.missions.empty_state, true);
+  assert.equal(body.missions.active.length, 0);
+  assert.deepEqual(body.mission_screens, {});
+  assert.deepEqual(body.mission_definitions, {});
+  assert.equal(body.mile_summary.empty_state, true);
+  assert.equal(body.mile_events.events.length, 0);
+  await app.close();
+});
+
+test("GET /v1/ui/bootstrap refuses a caller without an owner", async () => {
+  const signed = await signToken({ subject: "bootstrap-no-owner", expiresIn: "1h" });
+  const app = await buildApp({ ...signed.options, ledger: ledger() });
+  const response = await app.inject({
+    method: "GET",
+    url: "/v1/ui/bootstrap",
+    headers: { authorization: `Bearer ${signed.token}` },
+  });
+  assert.equal(response.statusCode, 403);
+  await app.close();
+});
+
 test("GET /v1/live refuses a caller without an owner", async () => {
   const signed = await signToken({ subject: "live-no-owner", expiresIn: "1h" });
   const app = await buildApp({ ...signed.options, ledger: ledger() });

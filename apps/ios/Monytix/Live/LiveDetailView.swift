@@ -192,7 +192,7 @@ struct LiveDetailView: View {
 
     private func weight(_ name: String) -> some View {
         let amount = snapshot.weights.first { $0.name == name }?.amount
-        card {
+        return card {
             Text(name).personalText(.primary, size: 14, weight: .bold)
             Text(amount ?? "No movements this month.").personalText(.secondary, size: 13)
         }

@@ -51,7 +51,19 @@ async function recordedWeights(pool: Pool, ownerId: string, from: string, to: st
     await client.query("BEGIN");
     await client.query("SELECT set_config('app.owner_id', $1, true)", [ownerId]);
     const result = await client.query<{ name: string; amount: string }>(
-      `SELECT (ops.weight_display_names(ARRAY[mw.primary_weight_code::text]))[1] AS name,
+      `SELECT CASE mw.primary_weight_code::text
+                WHEN 'W01_TIME' THEN 'Time'
+                WHEN 'W02_COMFORT' THEN 'Comfort'
+                WHEN 'W03_RISK' THEN 'Risk'
+                WHEN 'W04_OBLIGATIONS' THEN 'Obligations'
+                WHEN 'W05_IDENTITY' THEN 'Identity'
+                WHEN 'W06_RELATIONSHIPS' THEN 'Relationships'
+                WHEN 'W07_OPPORTUNITY' THEN 'Opportunity'
+                WHEN 'W08_ATTENTION' THEN 'Attention'
+                WHEN 'W09_RESILIENCE' THEN 'Resilience'
+                WHEN 'W10_LEGACY' THEN 'Legacy'
+                ELSE mw.primary_weight_code::text
+              END AS name,
               trim(cv.currency_code) || ' ' || to_char(sum(cv.amount), 'FM999999990.00') AS amount
          FROM core.movement_weight mw
          JOIN core.canonical_transaction_version cv
@@ -89,7 +101,7 @@ async function publishedWidgets(pool: Pool | null, ownerId: string, from: string
     pool.query<{ doc: unknown }>("SELECT ops.phone_mission_board($1::uuid) AS doc", [ownerId]),
     pool.query<{ doc: unknown }>("SELECT ops.phone_mile_summary($1::uuid) AS doc", [ownerId]),
     pool.query<{ doc: unknown }>("SELECT ops.phone_decision_board($1::uuid) AS doc", [ownerId]),
-    recordedWeights(pool, ownerId, from, to),
+    recordedWeights(pool, ownerId, from, to).catch(() => []),
   ]);
   const cards = missionCards(missions.rows[0]?.doc).filter((card) => card.title).slice(0, 2).map((card) => ({
     title: card.title as string,

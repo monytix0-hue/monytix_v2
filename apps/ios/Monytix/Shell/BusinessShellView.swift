@@ -178,7 +178,10 @@ private struct Chrome: View {
                     onStarted: {
                         missionStack = []
                         missionPage = .home
-                        Task { await store.refreshMissions() }
+                        Task {
+                            await store.refreshMissions()
+                            await store.refreshLive()
+                        }
                     }
                 ) {
                     destination = .mile

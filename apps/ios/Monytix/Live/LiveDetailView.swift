@@ -65,9 +65,7 @@ struct LiveDetailView: View {
         }
         .personalCanvas()
         .task {
-            if !store.liveReady {
-                await store.refreshLive()
-            }
+            await store.refreshLive()
         }
     }
 
@@ -101,44 +99,23 @@ struct LiveDetailView: View {
 
     @ViewBuilder
     private var forYou: some View {
-        summary("This period", "Unavailable")
-        ForEach(0..<2, id: \.self) { _ in
-            card {
-                HStack {
-                    Text("Unavailable").personalText(.primary, size: 16, weight: .bold)
-                    Spacer()
-                    pill("Unavailable")
+        if snapshot.previews.isEmpty {
+            Text("Nothing has been recorded yet.").personalText(.secondary, size: 15)
+        } else {
+            ForEach(snapshot.previews) { row in
+                card {
+                    Text(row.description ?? "Recorded movement").personalText(.primary, size: 16, weight: .bold)
+                    Text(movementLine(row)).personalText(.secondary, size: 15)
+                    if let account = row.accountName, !account.isEmpty {
+                        Text(account).personalText(.secondary, size: 13)
+                    }
                 }
-                Text("Unavailable").personalText(.secondary, size: 15)
-                detailButton("Unavailable") {}
             }
-        }
-        card {
-            Text("Holding steady").personalText(.primary, size: 16, weight: .bold)
-            Text("Unavailable").personalText(.secondary, size: 15)
-            Text("Unavailable").personalText(.secondary, size: 15)
         }
     }
 
     @ViewBuilder
     private var pulse: some View {
-        gradientCard([palette.widgetWeight, palette.surface], palette.widgetWeightBorder) {
-            HStack(spacing: PersonalSpace.s16) {
-                FigIcon(name: "FigActivity", size: 36)
-                    .frame(width: 56, height: 56)
-                    .background(palette.surface, in: Circle())
-                    .overlay(Circle().stroke(palette.border, lineWidth: 1))
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Unavailable").personalText(.primary, size: 16, weight: .bold)
-                    Text("Unavailable").personalText(.secondary, size: 15)
-                }
-            }
-            HStack(spacing: PersonalSpace.s8) {
-                pill("Unavailable")
-                pill("Unavailable")
-                pill("Unavailable")
-            }
-        }
         Text("The 10 weights").personalText(.primary, size: 16, weight: .bold)
         ForEach(Array(stride(from: 0, to: liveWeights.count, by: 2)), id: \.self) { index in
             HStack(alignment: .top, spacing: PersonalSpace.s12) {
@@ -146,54 +123,35 @@ struct LiveDetailView: View {
                 weight(liveWeights[index + 1])
             }
         }
-        card {
-            Text("About these weights").personalText(.primary, size: 16, weight: .bold)
-            Text("Unavailable").personalText(.secondary, size: 15)
-        }
         detailButton("Ask Moly", action: onAskMoly)
     }
 
     @ViewBuilder
     private var cash: some View {
         gradientCard([palette.widgetCashStart, palette.widgetCashEnd], palette.widgetCashBorder) {
-            Text("Unavailable").personalText(.primary, size: 16, weight: .bold)
-            Text("flexible").personalText(.secondary, size: 15)
-            Capsule().fill(palette.progressTrack).frame(height: 8)
-            HStack {
-                Text("Available  Unavailable").personalText(.secondary, size: 13)
-                Spacer()
-                Text("Committed  Unavailable").personalText(.secondary, size: 13)
+            if let row = snapshot.currencies.first, snapshot.recordedFlowAvailable {
+                Text("\(row.currency) in \(row.inflow) · out \(row.outflow)").personalText(.primary, size: 16, weight: .bold)
+                Text("Recorded inflow \(row.currency) \(row.inflow)").personalText(.secondary, size: 13)
+                Text("Recorded outflow \(row.currency) \(row.outflow)").personalText(.secondary, size: 13)
+            } else if snapshot.availableBalance == nil {
+                Text("Nothing has been recorded this month.").personalText(.secondary, size: 15)
             }
             if let availableBalance = snapshot.availableBalance {
                 Text("Available balance  \(availableBalance)").personalText(.secondary, size: 13)
             }
-            if snapshot.recordedFlowAvailable {
-                ForEach(snapshot.currencies, id: \.currency) { row in
-                    Text("Recorded inflow  \(row.inflow) \(row.currency)").personalText(.secondary, size: 13)
-                    Text("Recorded outflow  \(row.outflow) \(row.currency)").personalText(.secondary, size: 13)
+        }
+        Text("Recorded").personalText(.primary, size: 16, weight: .bold)
+        if snapshot.previews.isEmpty {
+            Text("Nothing has been recorded yet.").personalText(.secondary, size: 15)
+        } else {
+            ForEach(snapshot.previews) { row in
+                card {
+                    Text(row.description ?? "Recorded movement").personalText(.primary, size: 15, weight: .bold)
+                    Text(movementLine(row)).personalText(.secondary, size: 14)
                 }
             }
         }
-        Text("What’s coming").personalText(.primary, size: 16, weight: .bold)
-        let cashIcons = ["FigCashWallet", "FigCashLandmark", "FigCashReceipt", "FigCashArrow", "FigCashFlag"]
-        ForEach(Array(cashIcons.enumerated()), id: \.offset) { _, icon in
-            card {
-                HStack(spacing: PersonalSpace.s12) {
-                    FigIcon(name: icon, size: 28)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Unavailable").personalText(.primary, size: 15, weight: .bold)
-                        Text("Unavailable").personalText(.secondary, size: 14)
-                    }
-                }
-            }
-        }
-        card {
-            HStack(spacing: PersonalSpace.s12) {
-                FigIcon(name: "FigCashCheck", size: 24)
-                Text("Unavailable").personalText(.primary, size: 16, weight: .bold)
-            }
-            Text("Unavailable").personalText(.secondary, size: 15)
-        }
+        Text("Nothing further is scheduled.").personalText(.secondary, size: 15)
         detailButton("Ask Moly", action: onAskMoly)
     }
 
@@ -224,10 +182,19 @@ struct LiveDetailView: View {
         }
     }
 
+    private func movementLine(_ row: RecordedPreview) -> String {
+        let money = (row.amount?.isEmpty == false && row.currency?.isEmpty == false)
+            ? "\(row.currency ?? "") \(row.amount ?? "")"
+            : "Recorded"
+        let weight = row.weightName?.isEmpty == false ? " · \(row.weightName ?? "")" : ""
+        return "\(money) · \(row.transactionDate ?? "Recorded")\(weight)"
+    }
+
     private func weight(_ name: String) -> some View {
+        let amount = snapshot.weights.first { $0.name == name }?.amount
         card {
             Text(name).personalText(.primary, size: 14, weight: .bold)
-            Text("Unavailable").personalText(.secondary, size: 13)
+            Text(amount ?? "No movements this month.").personalText(.secondary, size: 13)
         }
     }
 

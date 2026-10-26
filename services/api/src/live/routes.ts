@@ -14,30 +14,106 @@ const ownerUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
 
 type MissionCard = { title?: string | null; line?: string | null; progress?: string | null };
 type MileOutcome = { title?: string | null };
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value) return null;
+  if (typeof value === "string") {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : null;
+    } catch {
+      return null;
+    }
+  }
+  return typeof value === "object" ? value as Record<string, unknown> : null;
+}
 
-async function publishedWidgets(pool: Pool | null, ownerId: string) {
+function missionCards(value: unknown): MissionCard[] {
+  const doc = asRecord(value);
+  const active = doc?.active;
+  return Array.isArray(active) ? active as MissionCard[] : [];
+}
+
+function decisionCards(value: unknown): Array<{ title: string; question: string | null }> {
+  const doc = asRecord(value);
+  if (!doc) return [];
+  const heaviest = asRecord(doc.heaviest);
+  const rest = Array.isArray(doc.decisions) ? doc.decisions : [];
+  const cards = [heaviest, ...rest.map((item) => asRecord(item))].filter((item): item is Record<string, unknown> => Boolean(item));
+  return cards.flatMap((card) => {
+    if (card.available === false || typeof card.title !== "string" || card.title.length === 0) return [];
+    return [{ title: card.title, question: typeof card.question === "string" ? card.question : null }];
+  }).slice(0, 2);
+}
+
+async function recordedWeights(pool: Pool, ownerId: string, from: string, to: string) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT set_config('app.owner_id', $1, true)", [ownerId]);
+    const result = await client.query<{ name: string; amount: string }>(
+      `SELECT (ops.weight_display_names(ARRAY[mw.primary_weight_code::text]))[1] AS name,
+              trim(cv.currency_code) || ' ' || to_char(sum(cv.amount), 'FM999999990.00') AS amount
+         FROM core.movement_weight mw
+         JOIN core.canonical_transaction_version cv
+           ON cv.logical_transaction_id = mw.logical_transaction_id AND cv.is_current
+         JOIN core.logical_transaction lt ON lt.logical_transaction_id = cv.logical_transaction_id
+        WHERE mw.owner_id = $1::uuid
+          AND mw.primary_weight_code IS NOT NULL
+          AND lt.identity_status = 'ACTIVE'
+          AND cv.duplicate_outcome <> 'EQUIVALENT_SUPERSEDED'
+          AND cv.amount IS NOT NULL
+          AND cv.transaction_date >= $2::date
+          AND cv.transaction_date <= $3::date
+        GROUP BY mw.primary_weight_code, cv.currency_code
+        ORDER BY sum(cv.amount) DESC, name`,
+      [ownerId, from, to],
+    );
+    await client.query("COMMIT");
+    return result.rows.filter((row) => row.name);
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function publishedWidgets(pool: Pool | null, ownerId: string, from: string, to: string) {
   const active_mission = { available: false as const };
+  const active_missions: Array<{ title: string; line: string | null; progress: string | null }> = [];
+  const decision_cards = { available: false as const, cards: [] as Array<{ title: string; question: string | null }> };
+  const weight_summary = { available: false as const, weights: [] as Array<{ name: string; amount: string }> };
   const mile = { available: false as const, impact: null, line: null, pills: [] as string[] };
-  if (!pool || !ownerUuid.test(ownerId)) return { active_mission, mile };
-  const [missions, miles] = await Promise.all([
-    pool.query<{ doc: { active?: MissionCard[] } | null }>("SELECT ops.phone_mission_board($1::uuid) AS doc", [ownerId]),
-    pool.query<{ doc: { empty_state?: boolean; impact?: { available?: boolean; amount?: string | null }; movement?: { available?: boolean; line?: string | null }; outcomes?: MileOutcome[] } | null }>(
-      "SELECT ops.phone_mile_summary($1::uuid) AS doc",
-      [ownerId],
-    ),
+  if (!pool || !ownerUuid.test(ownerId)) return { active_mission, active_missions, decision_cards, weight_summary, mile };
+  const [missions, miles, decisions, weights] = await Promise.all([
+    pool.query<{ doc: unknown }>("SELECT ops.phone_mission_board($1::uuid) AS doc", [ownerId]),
+    pool.query<{ doc: unknown }>("SELECT ops.phone_mile_summary($1::uuid) AS doc", [ownerId]),
+    pool.query<{ doc: unknown }>("SELECT ops.phone_decision_board($1::uuid) AS doc", [ownerId]),
+    recordedWeights(pool, ownerId, from, to),
   ]);
-  const first = missions.rows[0]?.doc?.active?.[0];
-  const summary = miles.rows[0]?.doc;
+  const cards = missionCards(missions.rows[0]?.doc).filter((card) => card.title).slice(0, 2).map((card) => ({
+    title: card.title as string,
+    line: card.line ?? null,
+    progress: card.progress ?? null,
+  }));
+  const chosen = decisionCards(decisions.rows[0]?.doc);
+  const summary = asRecord(miles.rows[0]?.doc);
+  const impact = asRecord(summary?.impact);
+  const movement = asRecord(summary?.movement);
+  const outcomes = Array.isArray(summary?.outcomes) ? summary.outcomes : [];
   return {
-    active_mission: first?.title
-      ? { available: true as const, title: first.title, line: first.line ?? null, progress: first.progress ?? null }
+    active_mission: cards[0]
+      ? { available: true as const, title: cards[0].title, line: cards[0].line, progress: cards[0].progress }
       : active_mission,
+    active_missions: cards,
+    decision_cards: chosen.length > 0 ? { available: true as const, cards: chosen } : decision_cards,
+    weight_summary: weights.length > 0 ? { available: true as const, weights } : weight_summary,
     mile: summary && summary.empty_state === false
       ? {
           available: true as const,
-          impact: summary.impact?.available ? summary.impact.amount ?? null : null,
-          line: summary.movement?.available ? summary.movement.line ?? null : null,
-          pills: (summary.outcomes ?? []).map((item) => item.title).filter((title): title is string => Boolean(title)).slice(0, 2),
+          impact: impact?.available ? (typeof impact.amount === "string" ? impact.amount : null) : null,
+          line: movement?.available ? (typeof movement.line === "string" ? movement.line : null) : null,
+          pills: outcomes.map((item) => asRecord(item)?.title).filter((title): title is string => typeof title === "string" && title.length > 0).slice(0, 2),
         }
       : mile,
   };
@@ -148,7 +224,7 @@ export const liveRoutes: FastifyPluginAsync<LiveRouteOptions> = async (app, opti
       return reply.status(403).send({ error: "owner_forbidden" });
     }
     const body = await recorded(ledger, request.ownerId, 20);
-    const widgets = await publishedWidgets(pool, request.ownerId);
+    const widgets = await publishedWidgets(pool, request.ownerId, body.recordedFlow.from, body.recordedFlow.to);
     return {
       contract: "ui-live-v0.1",
       recordedFlow: body.recordedFlow,
@@ -156,9 +232,11 @@ export const liveRoutes: FastifyPluginAsync<LiveRouteOptions> = async (app, opti
       summary: body.summary,
       transactions_preview: body.transactions_preview,
       today_decisions: unavailable,
-      weight_summary: unavailable,
+      weight_summary: widgets.weight_summary,
       reflection_summary: unavailable,
       active_mission: widgets.active_mission,
+      active_missions: widgets.active_missions,
+      decision_cards: widgets.decision_cards,
       mile: widgets.mile,
     };
   });

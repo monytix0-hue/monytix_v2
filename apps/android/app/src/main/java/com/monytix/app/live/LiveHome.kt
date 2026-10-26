@@ -12,8 +12,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -65,8 +63,8 @@ fun LiveHome(
         val json = store.liveJson
         if (json.isNullOrBlank()) LiveSnapshot.unavailable() else LiveSnapshot.parse(json)
     }
-    LaunchedEffect(store) {
-        if (!store.liveReady) store.refreshLive()
+    LaunchedEffect(Unit) {
+        store.refreshLive()
     }
     PersonalTheme {
         val theme = LocalPersonalTheme.current
@@ -81,10 +79,10 @@ fun LiveHome(
         ) {
             Enter(0) { Welcome(snapshot, onOpen) }
             Enter(64) { Missions(snapshot, onViewMissions) }
-            Enter(128) { Decisions(onViewDecisions) }
-            Enter(195) { Attention(onOpen) }
+            Enter(128) { Decisions(snapshot, onViewDecisions) }
+            Enter(195) { Attention(snapshot, onOpen) }
             Enter(260) { Cash(snapshot, onOpen) }
-            Enter(325) { Pulse(onOpen) }
+            Enter(325) { Pulse(snapshot, onOpen) }
             Enter(390) { Mile(snapshot, onViewMile) }
         }
     }
@@ -172,28 +170,31 @@ private fun Missions(snapshot: LiveSnapshot, onViewMissions: () -> Unit) {
     val theme = LocalPersonalTheme.current
     GoalCard {
         CardHeading("MISSIONS", pill = false)
-        val mission = snapshot.activeMission
-        if (mission == null) {
+        val missions = snapshot.activeMissions
+        if (missions.isEmpty()) {
             Text("Nothing is active yet.", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
         } else {
+            val first = missions.first()
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                ProgressRing(mission.progress ?: "Started")
-                mission.line?.let { Text(it, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp) }
+                ProgressRing(first.progress ?: "Started")
+                first.line?.let { Text(it, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp) }
             }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(PersonalRadius.inset))
-                    .background(theme.palette.mission)
-                    .padding(PersonalSpace.s16),
-                horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s12),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                FigIcon(R.drawable.fig_orbit_halo_sm, 36.dp)
-                Column(verticalArrangement = Arrangement.spacedBy(PersonalSpace.s8)) {
-                    Text(mission.title ?: "Mission", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    mission.line?.let { Text(it, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp) }
-                    mission.progress?.let { Text(it, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp) }
+            missions.forEach { mission ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(PersonalRadius.inset))
+                        .background(theme.palette.mission)
+                        .padding(PersonalSpace.s16),
+                    horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s12),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    FigIcon(R.drawable.fig_orbit_halo_sm, 36.dp)
+                    Column(verticalArrangement = Arrangement.spacedBy(PersonalSpace.s8)) {
+                        Text(mission.title ?: "Mission", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        mission.line?.let { Text(it, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp) }
+                        mission.progress?.let { Text(it, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp) }
+                    }
                 }
             }
         }
@@ -202,25 +203,40 @@ private fun Missions(snapshot: LiveSnapshot, onViewMissions: () -> Unit) {
 }
 
 @Composable
-private fun Decisions(onViewDecisions: () -> Unit) {
+private fun Decisions(snapshot: LiveSnapshot, onViewDecisions: () -> Unit) {
     val theme = LocalPersonalTheme.current
     PlainCard(theme.palette.widgetDecision, theme.palette.widgetDecisionBorder) {
-        CardHeading("DECISIONS")
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s12)) {
-            DecisionTile(Modifier.weight(1f), R.drawable.fig_biz_shield, "Strengthen your emergency cushion")
-            DecisionTile(Modifier.weight(1f), R.drawable.fig_biz_shield_2, "Review recurring spending")
+        CardHeading("DECISIONS", pill = false)
+        if (snapshot.decisions.isEmpty()) {
+            Text("Nothing needs a choice yet.", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
+        } else {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s12)) {
+                snapshot.decisions.forEachIndexed { index, card ->
+                    DecisionTile(
+                        Modifier.weight(1f),
+                        if (index == 0) R.drawable.fig_biz_shield else R.drawable.fig_biz_shield_2,
+                        card.title,
+                        card.question ?: "Needs a choice",
+                    )
+                }
+            }
         }
         GoldButton("View Decisions  →", onViewDecisions)
     }
 }
 
 @Composable
-private fun Attention(onOpen: (LivePage) -> Unit) {
+private fun Attention(snapshot: LiveSnapshot, onOpen: (LivePage) -> Unit) {
     val theme = LocalPersonalTheme.current
     PlainCard(theme.palette.widgetChange, theme.palette.widgetChangeBorder) {
-        CardHeading("FOR YOU")
-        InsightRow(R.drawable.fig_trending_up, "Spending pace")
-        InsightRow(R.drawable.fig_shield_alert, "Emergency buffer")
+        CardHeading("FOR YOU", pill = false)
+        if (snapshot.previews.isEmpty()) {
+            Text("Nothing has been recorded yet.", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
+        } else {
+            snapshot.previews.take(2).forEach { row ->
+                InsightRow(R.drawable.fig_trending_up, row.description ?: "Recorded movement", movementLine(row))
+            }
+        }
         GoldButton("See what changed  →") { onOpen(LivePage.ForYou) }
     }
 }
@@ -232,60 +248,52 @@ private fun Cash(snapshot: LiveSnapshot, onOpen: (LivePage) -> Unit) {
         listOf(theme.palette.widgetCashStart, theme.palette.widgetCashEnd),
         theme.palette.widgetCashBorder,
     ) {
-        CardHeading("CASH FLOW")
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s8)) {
-            Text(cashHeadline(snapshot), color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+        CardHeading("CASH FLOW", pill = false)
+        val recorded = snapshot.currencies.firstOrNull()
+        if (snapshot.recordedFlowAvailable && recorded != null) {
             Text(
-                "flexible",
-                color = theme.palette.textSecondary,
+                "${recorded.currency} in ${recorded.inflow} · out ${recorded.outflow}",
+                color = theme.palette.textPrimary,
                 fontFamily = theme.fontFamily,
+                fontWeight = FontWeight.SemiBold,
                 fontSize = 16.sp,
             )
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(12.dp)
+                    .clip(CircleShape)
+                    .background(theme.palette.progressTrack),
+            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Recorded inflow ${recorded.currency} ${recorded.inflow}", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Text("Recorded outflow ${recorded.currency} ${recorded.outflow}", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            }
+        } else if (snapshot.availableBalance == null) {
+            Text("Nothing has been recorded this month.", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
         }
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(12.dp)
-                .clip(CircleShape)
-                .background(theme.palette.progressTrack),
-        )
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-            Text(Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-        }
-        StatusPill()
-        Text(Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontSize = 15.sp)
         if (snapshot.availableBalance != null) {
             Text("Available balance", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
             Text(snapshot.availableBalance, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 22.sp)
-        }
-        if (snapshot.recordedFlowAvailable) {
-            snapshot.currencies.forEach { row ->
-                Text("Recorded inflow", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
-                Text("${row.currency} ${row.inflow}", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 22.sp)
-                Text("Recorded outflow", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
-                Text("${row.currency} ${row.outflow}", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 22.sp)
-            }
         }
         GoldButton("See what’s ahead  →") { onOpen(LivePage.CashFlow) }
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun Pulse(onOpen: (LivePage) -> Unit) {
+private fun Pulse(snapshot: LiveSnapshot, onOpen: (LivePage) -> Unit) {
     val theme = LocalPersonalTheme.current
     PlainCard(theme.palette.widgetWeight, theme.palette.widgetWeightBorder) {
-        CardHeading("FINANCIAL PULSE")
-        Text(Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-        Text(Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s8), verticalArrangement = Arrangement.spacedBy(PersonalSpace.s8)) {
-            repeat(3) { StatusPill() }
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s8)) {
-            WeightTile(Modifier.weight(1f), R.drawable.fig_activity, "Obligations")
-            WeightTile(Modifier.weight(1f), R.drawable.fig_sprout, "Opportunity")
-            WeightTile(Modifier.weight(1f), R.drawable.fig_shield, "Resilience")
+        CardHeading("FINANCIAL PULSE", pill = false)
+        if (snapshot.weights.isEmpty()) {
+            Text("No movements this month.", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
+        } else {
+            snapshot.weights.forEach { weight ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(weight.name, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text(weight.amount, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
+                }
+            }
         }
         GoldButton("Explore your 10 Weights  →") { onOpen(LivePage.Pulse) }
     }
@@ -413,7 +421,7 @@ private fun ProgressRing(label: String = Unavailable) {
 }
 
 @Composable
-private fun DecisionTile(modifier: Modifier, icon: Int, title: String) {
+private fun DecisionTile(modifier: Modifier, icon: Int, title: String, line: String) {
     val theme = LocalPersonalTheme.current
     Column(
         modifier
@@ -424,18 +432,18 @@ private fun DecisionTile(modifier: Modifier, icon: Int, title: String) {
     ) {
         FigIcon(icon, 28.dp)
         Text(title, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-        Text(Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+        Text(line, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
     }
 }
 
 @Composable
-private fun InsightRow(icon: Int, title: String) {
+private fun InsightRow(icon: Int, title: String, line: String) {
     val theme = LocalPersonalTheme.current
     Row(horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s12), verticalAlignment = Alignment.CenterVertically) {
         FigIcon(icon, 28.dp)
         Column(verticalArrangement = Arrangement.spacedBy(PersonalSpace.s4)) {
             Text(title, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-            Text(Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+            Text(line, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
         }
     }
 }
@@ -505,14 +513,6 @@ private fun Enter(delayMillis: Int, content: @Composable () -> Unit) {
 private fun animatorScale(): Float {
     val context = LocalContext.current
     return Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
-}
-
-private fun cashHeadline(snapshot: LiveSnapshot): String {
-    val row = snapshot.currencies.firstOrNull()
-    if (!snapshot.recordedFlowAvailable || row == null) {
-        return Unavailable
-    }
-    return "${row.currency} in ${row.inflow} · out ${row.outflow}"
 }
 
 private fun transactionFact(snapshot: LiveSnapshot): String {

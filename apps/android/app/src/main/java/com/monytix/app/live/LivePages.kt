@@ -7,8 +7,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -73,8 +71,8 @@ fun LiveDetail(
         val json = store.liveJson
         if (json.isNullOrBlank()) LiveSnapshot.unavailable() else LiveSnapshot.parse(json)
     }
-    LaunchedEffect(store) {
-        if (!store.liveReady) store.refreshLive()
+    LaunchedEffect(Unit) {
+        store.refreshLive()
     }
     if (page == LivePage.Transactions) {
         TransactionScreen(api, token, onBack)
@@ -99,8 +97,8 @@ fun LiveDetail(
     ) {
         BackBar(copy.first, copy.second, onBack)
         when (page) {
-            LivePage.ForYou -> ForYou()
-            LivePage.Pulse -> PulseDetail(onAskMoly)
+            LivePage.ForYou -> ForYou(snapshot)
+            LivePage.Pulse -> PulseDetail(snapshot, onAskMoly)
             LivePage.CashFlow -> CashDetail(snapshot, onAskMoly)
             else -> MolyDetail()
         }
@@ -130,116 +128,67 @@ private fun BackBar(title: String, subtitle: String, onBack: () -> Unit) {
 }
 
 @Composable
-private fun ForYou() {
+private fun ForYou(snapshot: LiveSnapshot) {
     val theme = LocalPersonalTheme.current
-    SummaryCard("This period", Unavailable)
-    repeat(2) {
-        PlainCard {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text(Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                StatusPill(Unavailable)
+    if (snapshot.previews.isEmpty()) {
+        Text("Nothing has been recorded yet.", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
+    } else {
+        snapshot.previews.forEach { row ->
+            PlainCard {
+                Text(row.description ?: "Recorded movement", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text(movementLine(row), color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
+                row.accountName?.let { Text(it, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp) }
             }
-            Text(Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
-            DetailButton(Unavailable) {}
         }
-    }
-    PlainCard {
-        Text("Holding steady", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        Text(Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
-        Text(Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
     }
 }
 
 @Composable
-private fun PulseDetail(onAskMoly: () -> Unit) {
+private fun PulseDetail(snapshot: LiveSnapshot, onAskMoly: () -> Unit) {
     val theme = LocalPersonalTheme.current
-    GradientCard(listOf(theme.palette.widgetWeight, theme.palette.surface), theme.palette.widgetWeightBorder) {
-        Row(horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s16), verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier.size(56.dp).clip(CircleShape).background(theme.palette.surface).border(1.dp, theme.palette.border, CircleShape),
-                contentAlignment = Alignment.Center,
-            ) {
-                FigIcon(R.drawable.fig_activity, 36.dp)
-            }
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                Text(Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
-            }
-        }
-        CountPills()
-    }
     Text("The 10 weights", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
     weights.chunked(2).forEach { row ->
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s12)) {
             row.forEach { name ->
+                val amount = snapshot.weights.firstOrNull { it.name == name }?.amount
                 PlainCard(Modifier.weight(1f)) {
                     Text(name, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    Text(Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+                    Text(amount ?: "No movements this month.", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
                 }
             }
         }
     }
-    PlainCard {
-        Text("About these weights", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        Text(Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
-    }
     DetailButton("Ask Moly") { onAskMoly() }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun CountPills() {
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s8), verticalArrangement = Arrangement.spacedBy(PersonalSpace.s8)) {
-        repeat(3) { StatusPill(Unavailable) }
-    }
 }
 
 @Composable
 private fun CashDetail(snapshot: LiveSnapshot, onAskMoly: () -> Unit) {
     val theme = LocalPersonalTheme.current
     GradientCard(listOf(theme.palette.widgetCashStart, theme.palette.widgetCashEnd), theme.palette.widgetCashBorder) {
-        Text(Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-        Text("flexible", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
-        Box(Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(PersonalRadius.pill)).background(theme.palette.progressTrack))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("Available  $Unavailable", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
-            Text("Committed  $Unavailable", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+        val recorded = snapshot.currencies.firstOrNull()
+        if (snapshot.recordedFlowAvailable && recorded != null) {
+            Text("${recorded.currency} in ${recorded.inflow} · out ${recorded.outflow}", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+            Text("Recorded inflow ${recorded.currency} ${recorded.inflow}", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+            Text("Recorded outflow ${recorded.currency} ${recorded.outflow}", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+        } else if (snapshot.availableBalance == null) {
+            Text("Nothing has been recorded this month.", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
         }
         if (snapshot.availableBalance != null) {
             Text("Available balance  ${snapshot.availableBalance}", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
         }
-        if (snapshot.recordedFlowAvailable) {
-            snapshot.currencies.forEach { row ->
-                Text("Recorded inflow  ${row.inflow} ${row.currency}", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
-                Text("Recorded outflow  ${row.outflow} ${row.currency}", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+    }
+    Text("Recorded", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+    if (snapshot.previews.isEmpty()) {
+        Text("Nothing has been recorded yet.", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
+    } else {
+        snapshot.previews.forEach { row ->
+            PlainCard {
+                Text(row.description ?: "Recorded movement", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Text(movementLine(row), color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
             }
         }
     }
-    Text("What’s coming", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-    listOf(
-        R.drawable.fig_cash_wallet,
-        R.drawable.fig_cash_landmark,
-        R.drawable.fig_cash_receipt,
-        R.drawable.fig_cash_arrow,
-        R.drawable.fig_cash_flag,
-    ).forEach { icon ->
-        PlainCard {
-            Row(horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s12), verticalAlignment = Alignment.CenterVertically) {
-                FigIcon(icon, 28.dp)
-                Column {
-                    Text(Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                    Text(Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 14.sp)
-                }
-            }
-        }
-    }
-    PlainCard {
-        Row(horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s12), verticalAlignment = Alignment.CenterVertically) {
-            FigIcon(R.drawable.fig_cash_check, 24.dp)
-            Text(Unavailable, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        }
-        Text(Unavailable, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
-    }
+    Text("Nothing further is scheduled.", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
     DetailButton("Ask Moly") { onAskMoly() }
 }
 

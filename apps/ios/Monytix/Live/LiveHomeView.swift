@@ -29,6 +29,16 @@ struct LiveMile: Equatable {
     var pills: [String] = []
 }
 
+struct LiveDecision: Equatable {
+    var title: String
+    var question: String?
+}
+
+struct LiveWeight: Equatable {
+    var name: String
+    var amount: String
+}
+
 struct LiveSnapshot: Equatable {
     var recordedFlowAvailable = false
     var currencies: [RecordedCurrency] = []
@@ -38,6 +48,9 @@ struct LiveSnapshot: Equatable {
     var previewsKnown = false
     var previews: [RecordedPreview] = []
     var activeMission: ActiveMission?
+    var activeMissions: [ActiveMission] = []
+    var decisions: [LiveDecision] = []
+    var weights: [LiveWeight] = []
     var mile: LiveMile? = nil
 
     static let unavailable = LiveSnapshot()
@@ -77,6 +90,15 @@ struct LiveSnapshot: Equatable {
         let balanceText: String? = (balance?["available"] as? Bool) == true && !(amount ?? "").isEmpty && !(currency ?? "").isEmpty
             ? "\(currency ?? "") \(amount ?? "")"
             : nil
+        let missionRows = root["active_missions"] as? [Any] ?? []
+        var activeMissions: [ActiveMission] = missionRows.compactMap { item in
+            guard let row = item as? [String: Any] else { return nil }
+            return ActiveMission(
+                title: row["title"] as? String,
+                line: row["line"] as? String,
+                progress: row["progress"] as? String
+            )
+        }
         let mission = root["active_mission"] as? [String: Any]
         let activeMission: ActiveMission? = (mission?["available"] as? Bool) == true
             ? ActiveMission(
@@ -85,6 +107,23 @@ struct LiveSnapshot: Equatable {
                 progress: mission?["progress"] as? String
             )
             : nil
+        if activeMissions.isEmpty, let activeMission {
+            activeMissions = [activeMission]
+        }
+        let decisionObject = root["decision_cards"] as? [String: Any]
+        let decisions: [LiveDecision] = (decisionObject?["available"] as? Bool) == true
+            ? (decisionObject?["cards"] as? [Any] ?? []).compactMap { item in
+                guard let row = item as? [String: Any], let title = row["title"] as? String, !title.isEmpty else { return nil }
+                return LiveDecision(title: title, question: row["question"] as? String)
+            }
+            : []
+        let weightObject = root["weight_summary"] as? [String: Any]
+        let weights: [LiveWeight] = (weightObject?["available"] as? Bool) == true
+            ? (weightObject?["weights"] as? [Any] ?? []).compactMap { item in
+                guard let row = item as? [String: Any], let name = row["name"] as? String, !name.isEmpty else { return nil }
+                return LiveWeight(name: name, amount: (row["amount"] as? String) ?? "")
+            }
+            : []
         let mileObject = root["mile"] as? [String: Any]
         let mile: LiveMile? = (mileObject?["available"] as? Bool) == true
             ? LiveMile(
@@ -102,6 +141,9 @@ struct LiveSnapshot: Equatable {
             previewsKnown: previewRows != nil,
             previews: previews,
             activeMission: activeMission,
+            activeMissions: activeMissions,
+            decisions: decisions,
+            weights: weights,
             mile: mile
         )
     }
@@ -138,9 +180,7 @@ struct LiveHomeView: View {
         .personalCanvas()
         .personalTheme()
         .task {
-            if !store.liveReady {
-                await store.refreshLive()
-            }
+            await store.refreshLive()
         }
     }
 
@@ -198,31 +238,35 @@ struct LiveHomeView: View {
     private var missions: some View {
         gradientCard(goalColors, goalBorder) {
             cardHeading("MISSIONS", pill: false)
-            if let mission = snapshot.activeMission {
-                VStack(spacing: PersonalSpace.s8) {
-                    progressRing(mission.progress ?? "Started")
-                    if let line = mission.line {
-                        Text(line).personalText(.secondary, size: 14)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                HStack(spacing: PersonalSpace.s12) {
-                    FigIcon(name: "FigOrbitHaloSm", size: 36)
-                    VStack(alignment: .leading, spacing: PersonalSpace.s8) {
-                        Text(mission.title ?? "Mission").personalText(.primary, size: 14, weight: .bold)
-                        if let line = mission.line {
-                            Text(line).personalText(.secondary, size: 13)
-                        }
-                        if let progress = mission.progress {
-                            Text(progress).personalText(.secondary, size: 13)
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(PersonalSpace.s16)
-                .background(palette.mission, in: RoundedRectangle(cornerRadius: PersonalRadius.inset, style: .continuous))
-            } else {
+            if snapshot.activeMissions.isEmpty {
                 Text("Nothing is active yet.").personalText(.secondary, size: 15)
+            } else {
+                if let mission = snapshot.activeMissions.first {
+                    VStack(spacing: PersonalSpace.s8) {
+                        progressRing(mission.progress ?? "Started")
+                        if let line = mission.line {
+                            Text(line).personalText(.secondary, size: 14)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                ForEach(Array(snapshot.activeMissions.enumerated()), id: \.offset) { _, mission in
+                    HStack(spacing: PersonalSpace.s12) {
+                        FigIcon(name: "FigOrbitHaloSm", size: 36)
+                        VStack(alignment: .leading, spacing: PersonalSpace.s8) {
+                            Text(mission.title ?? "Mission").personalText(.primary, size: 14, weight: .bold)
+                            if let line = mission.line {
+                                Text(line).personalText(.secondary, size: 13)
+                            }
+                            if let progress = mission.progress {
+                                Text(progress).personalText(.secondary, size: 13)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(PersonalSpace.s16)
+                    .background(palette.mission, in: RoundedRectangle(cornerRadius: PersonalRadius.inset, style: .continuous))
+                }
             }
             goldButton("View Missions  →") { onViewMissions() }
         }
@@ -230,10 +274,15 @@ struct LiveHomeView: View {
 
     private var decisions: some View {
         plainCard(palette.widgetDecision, palette.widgetDecisionBorder) {
-            cardHeading("DECISIONS")
-            HStack(alignment: .top, spacing: PersonalSpace.s12) {
-                decisionTile("FigBizShield", "Strengthen your emergency cushion")
-                decisionTile("FigBizShield2", "Review recurring spending")
+            cardHeading("DECISIONS", pill: false)
+            if snapshot.decisions.isEmpty {
+                Text("Nothing needs a choice yet.").personalText(.secondary, size: 15)
+            } else {
+                HStack(alignment: .top, spacing: PersonalSpace.s12) {
+                    ForEach(Array(snapshot.decisions.enumerated()), id: \.offset) { index, card in
+                        decisionTile(index == 0 ? "FigBizShield" : "FigBizShield2", card.title, card.question ?? "Needs a choice")
+                    }
+                }
             }
             goldButton("View Decisions  →") { onViewDecisions() }
         }
@@ -241,48 +290,35 @@ struct LiveHomeView: View {
 
     private var attention: some View {
         plainCard(palette.widgetChange, palette.widgetChangeBorder) {
-            cardHeading("FOR YOU")
-            insight("FigTrendingUp", "Spending pace")
-            insight("FigShieldAlert", "Emergency buffer")
+            cardHeading("FOR YOU", pill: false)
+            if snapshot.previews.isEmpty {
+                Text("Nothing has been recorded yet.").personalText(.secondary, size: 15)
+            } else {
+                ForEach(snapshot.previews.prefix(2)) { row in
+                    insight("FigTrendingUp", row.description ?? "Recorded movement", movementLine(row))
+                }
+            }
             goldButton("See what changed  →") { onOpen(.forYou) }
         }
     }
 
-    private var cashHeadline: String {
-        guard snapshot.recordedFlowAvailable, let row = snapshot.currencies.first else {
-            return "Unavailable"
-        }
-        return "\(row.currency) in \(row.inflow) · out \(row.outflow)"
-    }
-
     private var cash: some View {
         gradientCard([palette.widgetCashStart, palette.widgetCashEnd], palette.widgetCashBorder) {
-            cardHeading("CASH FLOW")
-            HStack(alignment: .center, spacing: PersonalSpace.s8) {
-                Text(cashHeadline).personalText(.primary, size: 16, weight: .bold)
-                Text("flexible")
-                    .font(.custom("Inter-Regular", size: 16))
-                    .foregroundStyle(palette.textSecondary)
+            cardHeading("CASH FLOW", pill: false)
+            if let row = snapshot.currencies.first, snapshot.recordedFlowAvailable {
+                Text("\(row.currency) in \(row.inflow) · out \(row.outflow)").personalText(.primary, size: 16, weight: .bold)
+                Capsule().fill(palette.progressTrack).frame(height: 12)
+                HStack {
+                    Text("Recorded inflow \(row.currency) \(row.inflow)").personalText(.primary, size: 13, weight: .bold)
+                    Spacer()
+                    Text("Recorded outflow \(row.currency) \(row.outflow)").personalText(.primary, size: 13, weight: .bold)
+                }
+            } else if snapshot.availableBalance == nil {
+                Text("Nothing has been recorded this month.").personalText(.secondary, size: 15)
             }
-            Capsule().fill(palette.progressTrack).frame(height: 12)
-            HStack {
-                Text("Unavailable").personalText(.primary, size: 13, weight: .bold)
-                Spacer()
-                Text("Unavailable").personalText(.primary, size: 13, weight: .bold)
-            }
-            statusPill("Unavailable")
-            Text("Unavailable").personalText(.primary, size: 15)
             if let availableBalance = snapshot.availableBalance {
                 Text("Available balance").personalText(.secondary, size: 13)
                 Text(availableBalance).personalText(.primary, size: 22, weight: .bold)
-            }
-            if snapshot.recordedFlowAvailable {
-                ForEach(snapshot.currencies, id: \.currency) { row in
-                    Text("Recorded inflow").personalText(.secondary, size: 13)
-                    Text("\(row.currency) \(row.inflow)").personalText(.primary, size: 22, weight: .bold)
-                    Text("Recorded outflow").personalText(.secondary, size: 13)
-                    Text("\(row.currency) \(row.outflow)").personalText(.primary, size: 22, weight: .bold)
-                }
             }
             goldButton("See what’s ahead  →") { onOpen(.cashFlow) }
         }
@@ -290,18 +326,17 @@ struct LiveHomeView: View {
 
     private var pulse: some View {
         plainCard(palette.widgetWeight, palette.widgetWeightBorder) {
-            cardHeading("FINANCIAL PULSE")
-            Text("Unavailable").personalText(.primary, size: 16, weight: .bold)
-            Text("Unavailable").personalText(.secondary, size: 15)
-            FlowLayout(spacing: PersonalSpace.s8) {
-                statusPill("Unavailable")
-                statusPill("Unavailable")
-                statusPill("Unavailable")
-            }
-            HStack(alignment: .top, spacing: PersonalSpace.s8) {
-                weightTile("FigActivity", "Obligations")
-                weightTile("FigSprout", "Opportunity")
-                weightTile("FigShield", "Resilience")
+            cardHeading("FINANCIAL PULSE", pill: false)
+            if snapshot.weights.isEmpty {
+                Text("No movements this month.").personalText(.secondary, size: 15)
+            } else {
+                ForEach(Array(snapshot.weights.enumerated()), id: \.offset) { _, weight in
+                    HStack {
+                        Text(weight.name).personalText(.primary, size: 14, weight: .bold)
+                        Spacer()
+                        Text(weight.amount).personalText(.secondary, size: 14)
+                    }
+                }
             }
             goldButton("Explore your 10 Weights  →") { onOpen(.pulse) }
         }
@@ -385,23 +420,31 @@ struct LiveHomeView: View {
         .frame(width: 96, height: 96)
     }
 
-    private func decisionTile(_ icon: String, _ title: String) -> some View {
+    private func movementLine(_ row: RecordedPreview) -> String {
+        let money = (row.amount?.isEmpty == false && row.currency?.isEmpty == false)
+            ? "\(row.currency ?? "") \(row.amount ?? "")"
+            : "Recorded"
+        let weight = row.weightName?.isEmpty == false ? " · \(row.weightName ?? "")" : ""
+        return "\(money) · \(row.transactionDate ?? "Recorded")\(weight)"
+    }
+
+    private func decisionTile(_ icon: String, _ title: String, _ line: String) -> some View {
         VStack(alignment: .leading, spacing: PersonalSpace.s8) {
             FigIcon(name: icon, size: 28)
             Text(title).personalText(.primary, size: 14, weight: .bold)
-            Text("Unavailable").personalText(.secondary, size: 13)
+            Text(line).personalText(.secondary, size: 13)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(PersonalSpace.s16)
         .background(palette.surfaceRaised, in: RoundedRectangle(cornerRadius: PersonalRadius.inset, style: .continuous))
     }
 
-    private func insight(_ symbol: String, _ title: String) -> some View {
+    private func insight(_ symbol: String, _ title: String, _ line: String) -> some View {
         HStack(alignment: .center, spacing: PersonalSpace.s12) {
             FigIcon(name: symbol, size: 28)
             VStack(alignment: .leading, spacing: PersonalSpace.s4) {
                 Text(title).personalText(.primary, size: 14, weight: .bold)
-                Text("Unavailable").personalText(.secondary, size: 13)
+                Text(line).personalText(.secondary, size: 13)
             }
         }
     }

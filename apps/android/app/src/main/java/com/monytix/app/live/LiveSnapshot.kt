@@ -2,6 +2,12 @@ package com.monytix.app.live
 
 import org.json.JSONObject
 
+internal fun movementLine(row: RecordedPreview): String {
+    val money = if (!row.currency.isNullOrBlank() && !row.amount.isNullOrBlank()) "${row.currency} ${row.amount}" else "Recorded"
+    val weight = if (row.weightName.isNullOrBlank()) "" else " · ${row.weightName}"
+    return "$money · ${row.transactionDate ?: "Recorded"}$weight"
+}
+
 internal fun JSONObject.optionalText(key: String): String? {
     if (isNull(key)) return null
     return optString(key).trim().ifBlank { null }
@@ -36,6 +42,16 @@ data class LiveMile(
     val pills: List<String>,
 )
 
+data class LiveDecision(
+    val title: String,
+    val question: String?,
+)
+
+data class LiveWeight(
+    val name: String,
+    val amount: String,
+)
+
 data class LiveSnapshot(
     val recordedFlowAvailable: Boolean,
     val currencies: List<RecordedCurrency>,
@@ -45,6 +61,9 @@ data class LiveSnapshot(
     val previewsKnown: Boolean,
     val previews: List<RecordedPreview>,
     val activeMission: ActiveMission?,
+    val activeMissions: List<ActiveMission>,
+    val decisions: List<LiveDecision>,
+    val weights: List<LiveWeight>,
     val mile: LiveMile?,
 ) {
     companion object {
@@ -57,6 +76,9 @@ data class LiveSnapshot(
             previewsKnown = false,
             previews = emptyList(),
             activeMission = null,
+            activeMissions = emptyList(),
+            decisions = emptyList(),
+            weights = emptyList(),
             mile = null,
         )
 
@@ -105,6 +127,21 @@ data class LiveSnapshot(
                         }
                     }
                 }
+                val missionRows = root.optJSONArray("active_missions")
+                val activeMissions = buildList {
+                    if (missionRows != null) {
+                        for (index in 0 until missionRows.length()) {
+                            val row = missionRows.optJSONObject(index) ?: continue
+                            add(
+                                ActiveMission(
+                                    title = row.optString("title").ifBlank { null },
+                                    line = row.optString("line").ifBlank { null },
+                                    progress = row.optString("progress").ifBlank { null },
+                                ),
+                            )
+                        }
+                    }
+                }
                 val mission = root.optJSONObject("active_mission")
                 val activeMission = if (mission?.optBoolean("available") == true) {
                     ActiveMission(
@@ -114,6 +151,35 @@ data class LiveSnapshot(
                     )
                 } else {
                     null
+                }
+                val missions = if (activeMissions.isNotEmpty()) activeMissions else listOfNotNull(activeMission)
+                val decisionObject = root.optJSONObject("decision_cards")
+                val decisionRows = decisionObject?.optJSONArray("cards")
+                val decisions = if (decisionObject?.optBoolean("available") == true && decisionRows != null) {
+                    buildList {
+                        for (index in 0 until decisionRows.length()) {
+                            val row = decisionRows.optJSONObject(index) ?: continue
+                            val title = row.optString("title")
+                            if (title.isBlank()) continue
+                            add(LiveDecision(title = title, question = row.optionalText("question")))
+                        }
+                    }
+                } else {
+                    emptyList()
+                }
+                val weightObject = root.optJSONObject("weight_summary")
+                val weightRows = weightObject?.optJSONArray("weights")
+                val weights = if (weightObject?.optBoolean("available") == true && weightRows != null) {
+                    buildList {
+                        for (index in 0 until weightRows.length()) {
+                            val row = weightRows.optJSONObject(index) ?: continue
+                            val name = row.optString("name")
+                            if (name.isBlank()) continue
+                            add(LiveWeight(name = name, amount = row.optString("amount")))
+                        }
+                    }
+                } else {
+                    emptyList()
                 }
                 val mileObject = root.optJSONObject("mile")
                 val mile = if (mileObject?.optBoolean("available") == true) {
@@ -146,6 +212,9 @@ data class LiveSnapshot(
                     previewsKnown = previewRows != null,
                     previews = previews,
                     activeMission = activeMission,
+                    activeMissions = missions,
+                    decisions = decisions,
+                    weights = weights,
                     mile = mile,
                 )
             } catch (_: Exception) {

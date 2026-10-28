@@ -205,17 +205,16 @@ private func stringList(_ value: Any?) -> [String] {
     }
 }
 
-private func money(_ raw: String?) -> String? {
+private func money(_ raw: String?, currency: String? = nil) -> String? {
     guard let raw, !raw.isEmpty else { return nil }
-    if raw.contains("₹") { return raw }
-    let cleaned = raw.replacingOccurrences(of: ",", with: "")
-    guard let amount = Double(cleaned) else { return raw }
-    let format = NumberFormatter()
-    format.numberStyle = .currency
-    format.currencyCode = "INR"
-    format.locale = Locale(identifier: "en_IN")
-    format.maximumFractionDigits = 0
-    return format.string(from: NSNumber(value: amount)) ?? raw
+    // A decision copy may already carry a formatted string ("₹48,000"). Leave it alone:
+    // re-parsing it would need to know which locale wrote the separators.
+    if raw.contains(where: { $0 == "₹" || $0 == "$" || $0 == "€" || $0 == "£" }) { return raw }
+    guard let amount = Money.parse(raw) else { return raw }
+    // The decision payload names a currency when it knows one; otherwise this is the
+    // owner's home currency, which the bootstrap supplies on the store.
+    let code = Money.currency(row: currency, account: nil, home: nil)
+    return Money.format(amount, currency: code, maximumFractionDigits: 0)
 }
 
 struct DecisionHomeView: View {

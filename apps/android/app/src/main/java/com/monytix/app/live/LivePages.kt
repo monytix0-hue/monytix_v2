@@ -38,6 +38,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.monytix.app.auth.MonytixApi
+import com.monytix.app.shell.Money
 import com.monytix.app.shell.UiSessionStore
 import com.monytix.app.theme.LocalPersonalTheme
 import com.monytix.app.theme.PersonalRadius
@@ -282,15 +283,25 @@ private fun PlainCard(modifier: Modifier = Modifier, content: @Composable Column
     )
 }
 
-private fun formatLiveMoney(currency: String?, amount: String?): String {
-    if (currency.isNullOrBlank() || amount.isNullOrBlank()) {
-        return Unavailable
-    }
-    val value = amount.replace(",", "").toDoubleOrNull()
-    val formatted = if (value != null) {
-        String.format(java.util.Locale.US, "%,.2f", value)
-    } else {
-        amount
-    }
-    return "$currency $formatted"
+/**
+ * A booked amount in the currency the row was booked in.
+ *
+ * Same rules as [formatMoney] in LiveHome: the code comes from the data, the
+ * separators come from the owner's locale, and the minor units come from
+ * `ref.currency`. A missing currency is a gap in the row, not a licence to assume
+ * rupees.
+ */
+private fun formatLiveMoney(
+    currency: String?,
+    amount: String?,
+    store: UiSessionStore? = null,
+): String {
+    val code = store?.displayCurrency(currency) ?: Money.currency(currency)
+    return Money.format(
+        raw = amount,
+        currency = code,
+        locale = store?.preferences?.moneyLocale ?: java.util.Locale.getDefault(),
+        minorUnits = store?.minorUnits(code),
+        fallback = Unavailable,
+    )
 }

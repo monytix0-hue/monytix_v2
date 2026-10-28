@@ -11,7 +11,7 @@ const ledger: LedgerRead = {
     return { items: [], nextCursor: null };
   },
   async transactionFilters() {
-    return { categories: [] };
+    return { categories: [], weights: [] };
   },
   async accountSummaries() {
     return [];

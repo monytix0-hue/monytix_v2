@@ -164,6 +164,61 @@ paths:
       responses:
         "200":
           description: Ledger read v0.1 page. Missing interpretations stay null.
+  /v1/transactions/{logicalTransactionId}:
+    patch:
+      operationId: correctLedgerTransaction
+      summary: Correct amount, direction, date, description, category, or weight. Account and currency stay locked.
+      description: Inserts canonical version n + 1 with USER_CORRECTION provenance and activates it. The prior version is retained.
+      parameters:
+        - in: path
+          name: logicalTransactionId
+          required: true
+          schema: { type: string, format: uuid }
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expected_version_id: { type: string, format: uuid }
+                amount: { type: string, pattern: "^(?:0|[1-9][0-9]*)(?:\\.[0-9]{1,4})?$" }
+                direction: { type: string, enum: [IN, OUT] }
+                occurred_at: { type: string, format: date-time }
+                description: { type: string }
+                category_id: { type: string }
+                subcategory_id: { type: string }
+                weight_code: { type: string }
+      responses:
+        "200":
+          description: Corrected movement. Version n + 1 is current.
+        "404":
+          description: No active movement for this owner.
+        "409":
+          description: stale_version when expected_version_id is no longer current, or idempotency_conflict.
+        "422":
+          description: invalid_request, or incomplete_transaction when the resulting version could not be READY.
+    delete:
+      operationId: deleteLedgerTransaction
+      summary: Permanently delete a recorded movement.
+      parameters:
+        - in: path
+          name: logicalTransactionId
+          required: true
+          schema: { type: string, format: uuid }
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Deleted. The ingestion source record and its disposition are kept as audit.
+        "404":
+          description: No active movement for this owner.
   /v1/accounts/summaries:
     get:
       operationId: listAccountSummaries

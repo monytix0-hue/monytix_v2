@@ -3,7 +3,15 @@ const months: Record<string, number> = {
   jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
 };
 
-export function normalizeDate(raw: string): { value: string; resolved: boolean } {
+export type DateOptions = {
+  /**
+   * Whether `03/15/2026` means March 15. Derived from the owner's locale by the
+   * caller. Only consulted when day-first is impossible.
+   */
+  monthFirst?: boolean;
+};
+
+export function normalizeDate(raw: string, options: DateOptions = {}): { value: string; resolved: boolean } {
   const text = raw.trim();
   if (!text) {
     return { value: "", resolved: false };
@@ -13,15 +21,13 @@ export function normalizeDate(raw: string): { value: string; resolved: boolean }
   }
   const numeric = text.match(/^(\d{2})[/-](\d{2})[/-](\d{4})$/);
   if (numeric) {
-    const iso = `${numeric[3]}-${numeric[2]}-${numeric[1]}`;
-    return validIso(iso) ? { value: iso, resolved: true } : { value: text, resolved: false };
+    return resolveNumeric(numeric[1]!, numeric[2]!, numeric[3]!, text, options.monthFirst === true);
   }
   const shortYear = text.match(/^(\d{2})[/-](\d{2})[/-](\d{2})$/);
   if (shortYear) {
     const year = Number(shortYear[3]);
-    const fullYear = year >= 70 ? 1900 + year : 2000 + year;
-    const iso = `${fullYear}-${shortYear[2]}-${shortYear[1]}`;
-    return validIso(iso) ? { value: iso, resolved: true } : { value: text, resolved: false };
+    const fullYear = year >= 70 ? `19${shortYear[3]}` : `20${shortYear[3]}`;
+    return resolveNumeric(shortYear[1]!, shortYear[2]!, fullYear, text, options.monthFirst === true);
   }
   const named = text.match(/^(\d{2})[/-]([A-Za-z]{3})[/-](\d{4})$/);
   if (named) {
@@ -33,6 +39,42 @@ export function normalizeDate(raw: string): { value: string; resolved: boolean }
     return validIso(iso) ? { value: iso, resolved: true } : { value: text, resolved: false };
   }
   return { value: text, resolved: false };
+}
+
+/**
+ * Resolve a `a/b/yyyy` date.
+ *
+ * Day-first is the default because that is what every seeded statement has
+ * always been. Two things can override it, in this order:
+ *
+ *  1. The numbers themselves. `15/03/2026` cannot be month-first, and
+ *     `03/15/2026` cannot be day-first, so an unambiguous pair settles it.
+ *  2. The owner's locale. `en-US` writes month-first, and there is no other
+ *     evidence in a two-digit pair like `03/04/2026`.
+ */
+function resolveNumeric(
+  first: string,
+  second: string,
+  year: string,
+  raw: string,
+  monthFirst: boolean,
+): { value: string; resolved: boolean } {
+  const a = Number(first);
+  const b = Number(second);
+  let day = a;
+  let month = b;
+  if (a > 12 && b <= 12) {
+    day = a;
+    month = b;
+  } else if (b > 12 && a <= 12) {
+    day = b;
+    month = a;
+  } else if (monthFirst) {
+    day = b;
+    month = a;
+  }
+  const iso = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  return validIso(iso) ? { value: iso, resolved: true } : { value: raw, resolved: false };
 }
 
 function validIso(iso: string): boolean {

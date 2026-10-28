@@ -99,6 +99,11 @@ for file in $(find /database/migrations -maxdepth 1 -type f -name '*.sql' | sort
     0053_mission_screens.sql) code="MISSION-SCREENS" ;;
     0054_mile_screens.sql) code="MILE-SCREENS" ;;
     0055_weight_display_grant.sql) code="WEIGHT-DISPLAY-GRANT" ;;
+    0056_currency_aware_spots.sql) code="CURRENCY-AWARE-SPOTS" ;;
+    0057_merchant_coverage.sql) code="MERCHANT-COVERAGE" ;;
+    0058_transaction_correction.sql) code="TRANSACTION-CORRECTION" ;;
+    0059_global_taxonomy.sql) code="GLOBAL-TAXONOMY" ;;
+    0060_currency_reference.sql) code="CURRENCY-REFERENCE" ;;
     *) code="" ;;
   esac
 

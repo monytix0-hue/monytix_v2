@@ -2,11 +2,14 @@ import type { FastifyPluginAsync } from "fastify";
 import type { Pool, PoolClient } from "pg";
 import { openPool } from "../db/pool.js";
 import type { LedgerRead } from "../ledger/read.js";
+import type { CurrencyDirectory, PreferencesStore } from "../preferences/index.js";
 import { displayTransactionTitle, formatDisplayAmount } from "./displayTitle.js";
 
 export type LiveRouteOptions = {
   ledger?: LedgerRead | null;
   databaseUrl?: string;
+  preferences?: PreferencesStore | null;
+  currencies?: CurrencyDirectory | null;
 };
 
 const unavailable = { available: false as const };
@@ -500,9 +503,31 @@ export const liveRoutes: FastifyPluginAsync<LiveRouteOptions> = async (app, opti
     const body = await recorded(ledger, request.ownerId, 20);
     const docs = await sessionDocuments(pool, request.ownerId, body.recordedFlow.from, body.recordedFlow.to);
     const widgets = widgetsFrom(docs.missions, docs.mile_summary, docs.decisions, docs.weights);
+    // The home currency, timezone and country ride along with the single prefetch
+    // both apps already cache, so neither needs a second round trip to format money.
+    const ownerPreferences = options.preferences
+      ? await options.preferences.read(request.ownerId).catch(() => null)
+      : null;
+    /**
+     * Formatting facts for the currencies this owner actually holds, plus the home
+     * currency. Not the whole table: a client only needs to render what it will show,
+     * and shipping 55 rows on every bootstrap to format INR is waste.
+     */
+    const heldCurrencies = options.preferences
+      ? await options.preferences.heldCurrencies(request.ownerId).catch(() => [])
+      : [];
+    const formatCodes = [...new Set([
+      ...heldCurrencies,
+      ownerPreferences?.defaultCurrencyCode ?? "",
+    ])].filter((code) => /^[A-Z]{3}$/.test(code));
+    const currencyFormats = options.currencies && formatCodes.length > 0
+      ? await options.currencies.forCodes(formatCodes).catch(() => ({}))
+      : {};
     return {
       contract: "ui-bootstrap-v0.1",
       live: liveDocument(body, widgets),
+      preferences: ownerPreferences,
+      currency_formats: currencyFormats,
       decisions: docs.decisions,
       decision_screens: docs.decision_screens,
       missions: docs.missions,

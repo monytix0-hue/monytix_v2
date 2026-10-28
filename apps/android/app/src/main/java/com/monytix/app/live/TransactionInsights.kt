@@ -46,16 +46,17 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.monytix.app.shell.Money
 import com.monytix.app.theme.LocalPersonalTheme
 import com.monytix.app.theme.PersonalRadius
 import com.monytix.app.theme.PersonalSpace
 import com.monytix.app.theme.PersonalTokens
-import java.text.NumberFormat
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.atan2
 import kotlin.math.hypot
+import kotlin.math.abs
 import org.json.JSONObject
 
 // MARK: - Models
@@ -191,33 +192,54 @@ internal fun insightMonthLabel(value: String): String = runCatching {
     YearMonth.parse(value).format(DateTimeFormatter.ofPattern("MMMM yyyy", Locale.getDefault()))
 }.getOrDefault(value)
 
-internal fun insightMoney(value: Double, currency: String?, signed: Boolean = false): String {
-    val number = NumberFormat.getNumberInstance(Locale.getDefault()).apply {
-        minimumFractionDigits = 2
-        maximumFractionDigits = 2
-    }
-    val magnitude = number.format(kotlin.math.abs(value))
-    val sign = if (!signed) "" else if (value < 0) "−" else "+"
-    return if (currency.isNullOrBlank()) "$sign$magnitude" else "$sign${currency.trim()} $magnitude"
+/**
+ * A booked figure in the report's own currency.
+ *
+ * `currency` is the insights payload's `currency`: the booked currency the slices
+ * are actually in. It is never the display currency, because a pie chart that
+ * silently mixes two currencies cannot reconcile. The separator comes from the
+ * owner's locale, so `en_IN` still groups by lakh without the app slicing digits.
+ */
+internal fun insightMoney(
+    value: Double,
+    currency: String?,
+    signed: Boolean = false,
+    locale: Locale = Locale.getDefault(),
+    minorUnits: Int? = null,
+): String {
+    val magnitude = Money.format(
+        java.math.BigDecimal.valueOf(abs(value)),
+        currency = currency,
+        locale = locale,
+        minorUnits = minorUnits,
+    )
+    if (!signed) return magnitude
+    // The minus belongs in front of the whole figure, not inside the symbol position.
+    val sign = if (value < 0) "−" else "+"
+    return "$sign$magnitude"
 }
 
-internal fun insightCompact(value: Double, currency: String?): String {
-    val absolute = kotlin.math.abs(value)
-    val (scaled, suffix) = when {
-        absolute >= 10_000_000 -> value / 10_000_000 to "Cr"
-        absolute >= 100_000 -> value / 100_000 to "L"
-        absolute >= 1_000 -> value / 1_000 to "k"
-        else -> return insightMoney(value, currency)
-    }
-    val number = NumberFormat.getNumberInstance(Locale.getDefault()).apply { maximumFractionDigits = 1 }
-    val text = number.format(scaled) + suffix
-    return if (currency.isNullOrBlank()) text else "${currency.trim()} $text"
-}
+/**
+ * A compact figure for a card heading: `₹1.8L`, `$14.2k`.
+ *
+ * The scale word follows the currency's own grouping, so rupees keep lakh and
+ * dollars do not gain a `L` they never use.
+ */
+internal fun insightCompact(
+    value: Double,
+    currency: String?,
+    locale: Locale = Locale.getDefault(),
+): String = Money.compact(java.math.BigDecimal.valueOf(value), currency, locale)
 
 // MARK: - Month summary carousel
 
 @Composable
-internal fun MonthSummaryCarousel(months: List<InsightMonth>, currency: String?) {
+internal fun MonthSummaryCarousel(
+    months: List<InsightMonth>,
+    currency: String?,
+    locale: Locale = Locale.getDefault(),
+    minorUnits: Int? = null,
+) {
     val theme = LocalPersonalTheme.current
     Column(verticalArrangement = Arrangement.spacedBy(PersonalSpace.s8)) {
         Text(
@@ -250,14 +272,21 @@ internal fun MonthSummaryCarousel(months: List<InsightMonth>, currency: String?)
                     .padding(horizontal = PersonalSpace.s4),
                 horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s12),
             ) {
-                months.forEach { month -> MonthCard(month, currency) }
+                months.forEach { month ->
+                    MonthCard(month, currency, locale = locale, minorUnits = minorUnits)
+                }
             }
         }
     }
 }
 
 @Composable
-private fun MonthCard(month: InsightMonth, currency: String?) {
+private fun MonthCard(
+    month: InsightMonth,
+    currency: String?,
+    locale: Locale = Locale.getDefault(),
+    minorUnits: Int? = null,
+) {
     val theme = LocalPersonalTheme.current
     val rising = month.closing >= month.opening
     val balanceTint = if (rising) {
@@ -312,7 +341,7 @@ private fun MonthCard(month: InsightMonth, currency: String?) {
                         .background(balanceTint),
                 )
                 Text(
-                    "Net ${insightMoney(month.closing - month.opening, currency, signed = true)}",
+                    "Net ${insightMoney(month.closing - month.opening, currency, signed = true, locale = locale, minorUnits = minorUnits)}",
                     color = theme.palette.textSecondary,
                     fontFamily = theme.fontFamily,
                     fontSize = 12.sp,
@@ -345,6 +374,8 @@ private fun MonthAmount(label: String, value: Double, currency: String?, tint: C
 @Composable
 internal fun SpendingChartCard(
     insights: LedgerInsights,
+    locale: Locale = Locale.getDefault(),
+    minorUnits: Int? = null,
     onReviewUncategorised: () -> Unit,
 ) {
     val theme = LocalPersonalTheme.current
@@ -421,6 +452,7 @@ internal fun SpendingChartCard(
                 currency = insights.currency,
                 centerLabel = drilled?.name ?: "Total outflow",
                 progress = reveal.value,
+                locale = locale,
                 onSliceTap = { slice ->
                     val code = slice.id.substringBefore("|")
                     val category = insights.categories.firstOrNull { it.code == code }
@@ -440,9 +472,9 @@ internal fun SpendingChartCard(
             if (drilled == null && insights.totals.debit > 0) {
                 Text(
                     if (insights.reconciles) {
-                        "Slices match the ${insightMoney(insights.totals.debit, insights.currency)} recorded outflow."
+                        "Slices match the ${insightMoney(insights.totals.debit, insights.currency, locale = locale, minorUnits = minorUnits)} recorded outflow."
                     } else {
-                        "Slices cover ${insightMoney(insights.spendingTotal, insights.currency)} of ${insightMoney(insights.totals.debit, insights.currency)} recorded outflow."
+                        "Slices cover ${insightMoney(insights.spendingTotal, insights.currency, locale = locale, minorUnits = minorUnits)} of ${insightMoney(insights.totals.debit, insights.currency, locale = locale, minorUnits = minorUnits)} recorded outflow."
                     },
                     color = theme.palette.textSecondary,
                     fontFamily = theme.fontFamily,
@@ -480,7 +512,7 @@ internal fun SpendingChartCard(
                             modifier = Modifier.weight(1f),
                         )
                         Text(
-                            insightMoney(slice.amount, insights.currency),
+                            insightMoney(slice.amount, insights.currency, locale = locale, minorUnits = minorUnits),
                             color = theme.palette.textPrimary,
                             fontFamily = theme.fontFamily,
                             fontWeight = FontWeight.SemiBold,
@@ -530,6 +562,7 @@ private fun SpendingPie(
     currency: String?,
     centerLabel: String,
     progress: Float,
+    locale: Locale = Locale.getDefault(),
     onSliceTap: (InsightSlice) -> Unit,
 ) {
     val theme = LocalPersonalTheme.current
@@ -595,7 +628,7 @@ private fun SpendingPie(
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
-                insightCompact(total, currency),
+                insightCompact(total, currency, locale),
                 color = theme.palette.textPrimary,
                 fontFamily = theme.fontFamily,
                 fontWeight = FontWeight.Bold,

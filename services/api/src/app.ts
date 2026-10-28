@@ -13,6 +13,13 @@ import { missionsRoutes } from "./missions/index.js";
 import { nudgesRoutes } from "./nudges/index.js";
 import { personalRoutes } from "./personal/index.js";
 import { platformRoutes, type PlatformProbe } from "./platform/index.js";
+import {
+  createCurrencyDirectory,
+  createPreferencesStore,
+  preferencesRoutes,
+  type CurrencyDirectory,
+  type PreferencesStore,
+} from "./preferences/index.js";
 import { createRateLimit } from "./http/rate-limit.js";
 import { projectionsRoutes } from "./projections/index.js";
 import { sourcesRoutes } from "./sources/index.js";
@@ -22,6 +29,8 @@ import { ledgerRoutes } from "./ledger/routes.js";
 import { liveRoutes } from "./live/index.js";
 import type { CategoryChoiceStore } from "./transactions/category.js";
 import { createCategoryChoiceStore } from "./transactions/category.js";
+import type { TransactionEditStore } from "./transactions/edit.js";
+import { createTransactionEditStore } from "./transactions/edit.js";
 import type { ManualTransactionStore } from "./transactions/manual.js";
 import type { ImportStore } from "./imports/store.js";
 import type { ObjectStorage } from "./imports/storage.js";
@@ -36,9 +45,12 @@ export type BuildOptions = {
   identity?: IdentityStore | null;
   manualTransactions?: ManualTransactionStore | null;
   categoryChoices?: CategoryChoiceStore | null;
+  transactionEdit?: TransactionEditStore | null;
   ledger?: LedgerRead | null;
   imports?: ImportStore | null;
   objectStorage?: ObjectStorage | null;
+  preferences?: PreferencesStore | null;
+  currencies?: CurrencyDirectory | null;
   importScanner?: () => Promise<void>;
   databaseUrl?: string;
   gmail?: GmailWebhookOptions;
@@ -131,9 +143,18 @@ export async function buildApp(options: BuildOptions = {}): Promise<FastifyInsta
   const categoryChoices = options.categoryChoices === undefined
     ? (options.databaseUrl ? createCategoryChoiceStore(options.databaseUrl) : null)
     : options.categoryChoices;
+  const transactionEdit = options.transactionEdit === undefined
+    ? (options.databaseUrl ? createTransactionEditStore(options.databaseUrl) : null)
+    : options.transactionEdit;
   const ledger = options.ledger ?? null;
   const imports = options.imports ?? null;
   const objectStorage = options.objectStorage ?? null;
+  const preferences = options.preferences === undefined
+    ? (options.databaseUrl ? createPreferencesStore(options.databaseUrl) : null)
+    : options.preferences;
+  const currencies = options.currencies === undefined
+    ? (options.databaseUrl ? createCurrencyDirectory(options.databaseUrl) : null)
+    : options.currencies;
 
   registerAuthGuard(app, auth, identity);
   app.addHook("onRequest", async (request, reply) => {
@@ -160,6 +181,11 @@ export async function buildApp(options: BuildOptions = {}): Promise<FastifyInsta
       await categoryChoices.close();
     });
   }
+  if (transactionEdit) {
+    app.addHook("onClose", async () => {
+      await transactionEdit.close();
+    });
+  }
   if (ledger) {
     app.addHook("onClose", async () => {
       await ledger.close();
@@ -175,13 +201,29 @@ export async function buildApp(options: BuildOptions = {}): Promise<FastifyInsta
       await objectStorage.close();
     });
   }
+  if (preferences) {
+    app.addHook("onClose", async () => {
+      await preferences.close();
+    });
+  }
+  if (currencies) {
+    app.addHook("onClose", async () => {
+      await currencies.close();
+    });
+  }
 
   await app.register(authRoutes, { auth });
   await app.register(usersRoutes);
   await app.register(accountsRoutes);
-  await app.register(transactionsRoutes, { manual: manualTransactions, categories: categoryChoices });
-  await app.register(ledgerRoutes, { ledger });
-  await app.register(liveRoutes, { ledger, databaseUrl: options.databaseUrl });
+  await app.register(transactionsRoutes, { manual: manualTransactions, categories: categoryChoices, edit: transactionEdit });
+  await app.register(ledgerRoutes, { ledger, preferences });
+  await app.register(liveRoutes, {
+    ledger,
+    databaseUrl: options.databaseUrl,
+    preferences,
+    currencies,
+  });
+  await app.register(preferencesRoutes, { store: preferences, currencies });
 
   // When FINANCE_BACKEND_URL is set, proxy imports + Decision OS to :8090 and skip local import/stub routes.
   const financeUrl = options.financeBackendUrl?.trim() || "";

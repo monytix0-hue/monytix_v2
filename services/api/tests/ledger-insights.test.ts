@@ -11,7 +11,7 @@ function ledger(overrides: Partial<LedgerRead> = {}): LedgerRead {
       return { items: [], nextCursor: null };
     },
     async transactionFilters() {
-      return { categories: [] };
+      return { categories: [], weights: [] };
     },
     async accountSummaries() {
       return [];
@@ -24,6 +24,7 @@ function ledger(overrides: Partial<LedgerRead> = {}): LedgerRead {
       return {
         uncategorised: 4,
         currency: input.currency,
+        displayCurrency: input.displayCurrency ?? null,
         totals: { credit: "1200.00", debit: "800.00", categorisedOutflow: "500.00", uncategorisedOutflow: "300.00" },
         monthlySummary: [
           { month: "2026-10", credit: "1200.00", debit: "800.00", openingBalance: "600.00", closingBalance: "1000.00" },
@@ -100,5 +101,116 @@ test("GET /v1/ledger/insights requires an owner", async () => {
     headers: { authorization: `Bearer ${signed.token}` },
   });
   assert.equal(response.statusCode, 403);
+  await app.close();
+});
+
+test("display_currency is passed through to the read model", async () => {
+  const signed = await signToken({ subject: "ledger-insights-display", expiresIn: "1h" });
+  const seen: InsightsInput[] = [];
+  const app = await buildApp({
+    ...signed.options,
+    ledger: ledger({
+      async insights(input) {
+        seen.push(input);
+        return {
+          uncategorised: 0,
+          currency: input.currency,
+          displayCurrency: input.displayCurrency ?? null,
+          totals: { credit: "0.00", debit: "0.00", categorisedOutflow: "0.00", uncategorisedOutflow: "0.00" },
+          monthlySummary: [],
+          spendingAnalysis: { categories: {} },
+        };
+      },
+    }),
+  });
+  const response = await app.inject({
+    method: "GET",
+    url: "/v1/ledger/insights?currency=INR&display_currency=USD",
+    headers: { authorization: `Bearer ${signed.token}`, "x-monytix-owner-id": "owner-allowed" },
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(seen[0].currency, "INR");
+  assert.equal(seen[0].displayCurrency, "USD");
+  await app.close();
+});
+
+test("an invalid display_currency is rejected like any other currency", async () => {
+  const signed = await signToken({ subject: "ledger-insights-display-bad", expiresIn: "1h" });
+  const app = await buildApp({ ...signed.options, ledger: ledger() });
+  const response = await app.inject({
+    method: "GET",
+    url: "/v1/ledger/insights?display_currency=dollars",
+    headers: { authorization: `Bearer ${signed.token}`, "x-monytix-owner-id": "owner-allowed" },
+  });
+  assert.equal(response.statusCode, 422);
+  await app.close();
+});
+
+test("the owner's home currency is used when no display_currency is named", async () => {
+  const signed = await signToken({ subject: "ledger-insights-home", expiresIn: "1h" });
+  const seen: InsightsInput[] = [];
+  const app = await buildApp({
+    ...signed.options,
+    ledger: ledger({
+      async insights(input) {
+        seen.push(input);
+        return {
+          uncategorised: 0,
+          currency: input.currency,
+          displayCurrency: input.displayCurrency ?? null,
+          totals: { credit: "0.00", debit: "0.00", categorisedOutflow: "0.00", uncategorisedOutflow: "0.00" },
+          monthlySummary: [],
+          spendingAnalysis: { categories: {} },
+        };
+      },
+    }),
+    preferences: {
+      async read() {
+        return {
+          defaultCurrencyCode: "EUR",
+          timezoneName: "Europe/Berlin",
+          countryCode: "DE",
+          locale: "de-DE",
+          updatedAt: null,
+        };
+      },
+      async heldCurrencies() {
+        return ["INR"];
+      },
+      async write() {
+        throw new Error("not used");
+      },
+      async close() {},
+    },
+  });
+  const response = await app.inject({
+    method: "GET",
+    url: "/v1/ledger/insights",
+    headers: { authorization: `Bearer ${signed.token}`, "x-monytix-owner-id": "owner-allowed" },
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(seen[0].displayCurrency, "EUR");
+  await app.close();
+});
+
+test("GET /v1/finance/overview accepts display_currency alongside the booked filter", async () => {
+  const signed = await signToken({ subject: "finance-overview-display", expiresIn: "1h" });
+  const seen: Array<{ currency: string | null; displayCurrency?: string | null }> = [];
+  const app = await buildApp({
+    ...signed.options,
+    ledger: ledger({
+      async overview(input) {
+        seen.push({ currency: input.currency, displayCurrency: input.displayCurrency });
+        return { from: input.from, to: input.to, displayCurrency: input.displayCurrency ?? null, currencies: [] };
+      },
+    }),
+  });
+  const response = await app.inject({
+    method: "GET",
+    url: "/v1/finance/overview?currency=INR&display_currency=USD",
+    headers: { authorization: `Bearer ${signed.token}`, "x-monytix-owner-id": "owner-allowed" },
+  });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(seen[0], { currency: "INR", displayCurrency: "USD" });
   await app.close();
 });

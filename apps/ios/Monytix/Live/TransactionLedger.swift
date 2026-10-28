@@ -2,30 +2,128 @@ import SwiftUI
 
 struct LedgerTransaction: Identifiable, Equatable {
     let id: String
+    let versionId: String?
     let amount: String?
     let currency: String?
     let direction: String?
     let transactionDate: String?
     let description: String?
+    let categoryCode: String?
     let categoryName: String?
+    let subcategoryCode: String?
     let subcategoryName: String?
     let accountName: String?
+    let weightCode: String?
     let weightName: String?
     let reference: String?
+    /// The *as stated* pair when the alert named a foreign amount before the issuer
+    /// converted it. `nil` means "same as booked", not "unknown".
+    let statedAmount: String?
+    let statedCurrency: String?
+    /// How the parser decided the booked currency, and how sure it was.
+    let currencyBasis: String?
+    let currencyConfidence: Double?
+    /// True when the ledger should offer the "Currency uncertain — review" row
+    /// instead of presenting a guessed code as booked truth.
+    let currencyUncertain: Bool
+}
 
-    func withLabels(categoryName: String?, subcategoryName: String?, weightName: String?) -> LedgerTransaction {
-        LedgerTransaction(
-            id: id,
-            amount: amount,
-            currency: currency,
-            direction: direction,
-            transactionDate: transactionDate,
-            description: description,
-            categoryName: categoryName,
-            subcategoryName: subcategoryName,
-            accountName: accountName,
-            weightName: weightName,
-            reference: reference
+/// Only the fields the user actually changed travel to the API.
+struct TransactionCorrection: Equatable {
+    var versionId: String?
+    var amount: String?
+    var direction: String?
+    var occurredAt: String?
+    var description: String?
+    var categoryCode: String?
+    var subcategoryCode: String?
+    var weightCode: String?
+
+    var isEmpty: Bool {
+        amount == nil && direction == nil && occurredAt == nil && description == nil &&
+            categoryCode == nil && subcategoryCode == nil && weightCode == nil
+    }
+
+    var payload: [String: Any] {
+        var body: [String: Any] = [:]
+        if let versionId { body["expected_version_id"] = versionId }
+        if let amount { body["amount"] = amount }
+        if let direction { body["direction"] = direction }
+        if let occurredAt { body["occurred_at"] = occurredAt }
+        if let description { body["description"] = description }
+        if let categoryCode { body["category_id"] = categoryCode }
+        if let subcategoryCode { body["subcategory_id"] = subcategoryCode }
+        if let weightCode { body["weight_code"] = weightCode }
+        return body
+    }
+}
+
+/// The editable copy of a row while the user is on the detail screen.
+struct TransactionDraft: Equatable {
+    var amount: String
+    var direction: String
+    var date: String
+    var description: String
+    var categoryCode: String?
+    var categoryName: String?
+    var subcategoryCode: String?
+    var subcategoryName: String?
+    var weightCode: String?
+    var weightName: String?
+
+    init(row: LedgerTransaction) {
+        amount = row.amount?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        direction = row.direction ?? ""
+        date = row.transactionDate ?? ""
+        description = row.description ?? ""
+        categoryCode = row.categoryCode
+        categoryName = row.categoryName
+        subcategoryCode = row.subcategoryCode
+        subcategoryName = row.subcategoryName
+        weightCode = row.weightCode
+        weightName = row.weightName
+    }
+
+    /// Mirrors the ledger's own amount grammar so the server never has to reject it.
+    var error: String? {
+        let value = amount.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.isEmpty { return "Enter an amount." }
+        let pattern = "^(?:0|[1-9]\\d*)(?:\\.\\d{1,4})?$"
+        if value.range(of: pattern, options: .regularExpression) == nil {
+            return "Amount can have at most four decimals."
+        }
+        if (Double(value) ?? 0) <= 0 { return "Amount must be more than zero." }
+        if direction != "IN" && direction != "OUT" { return "Choose debit or credit." }
+        // A missing date is left alone rather than forced, so an old row without
+        // one can still have its amount fixed.
+        if !date.isEmpty, date.range(of: "^\\d{4}-\\d{2}-\\d{2}$", options: .regularExpression) == nil {
+            return "Choose a date."
+        }
+        if description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Enter a description." }
+        return nil
+    }
+
+    private func changed(_ next: String?, _ current: String?) -> String? {
+        let trimmed = next?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let before = current?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard let trimmed, !trimmed.isEmpty, trimmed != before else { return nil }
+        return trimmed
+    }
+
+    func corrections(against row: LedgerTransaction) -> TransactionCorrection {
+        let nextSubcategory = changed(subcategoryCode, row.subcategoryCode)
+        let nextCategory = changed(categoryCode, row.categoryCode)
+        return TransactionCorrection(
+            versionId: row.versionId,
+            amount: changed(amount, row.amount),
+            direction: changed(direction, row.direction),
+            occurredAt: date == (row.transactionDate ?? "") ? nil : "\(date)T00:00:00Z",
+            description: changed(description, row.description),
+            // The API refuses a subcategory without its category, so a subcategory
+            // move always carries the category even when that part is unchanged.
+            categoryCode: nextSubcategory != nil ? categoryCode : nextCategory,
+            subcategoryCode: nextSubcategory,
+            weightCode: changed(weightCode, row.weightCode)
         )
     }
 }
@@ -54,6 +152,7 @@ struct TransactionLedger: View {
     @State private var items: [LedgerTransaction] = []
     @State private var nextCursor: String?
     @State private var categories: [TransactionCategory] = []
+    @State private var weights: [TransactionChoice] = []
     @State private var direction: String?
     @State private var category: String?
     @State private var subcategory: String?
@@ -88,10 +187,19 @@ struct TransactionLedger: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: PersonalSpace.s16) {
                         if showSummary && insightsKnown {
-                            MonthSummaryCarousel(months: insights.months, currency: insights.currency)
+                            MonthSummaryCarousel(
+                                months: insights.months,
+                                currency: insights.currency,
+                                locale: store?.preferences?.moneyLocale ?? .current,
+                                minorUnits: store?.minorUnits(for: insights.currency)
+                            )
                         }
                         if showSummary && insightsKnown {
-                            SpendingChartCard(insights: insights) {
+                            SpendingChartCard(
+                                insights: insights,
+                                locale: store?.preferences?.moneyLocale ?? .current,
+                                minorUnits: store?.minorUnits(for: insights.currency)
+                            ) {
                                 showSummary = true
                                 direction = nil
                                 category = "none"
@@ -118,10 +226,15 @@ struct TransactionLedger: View {
                 TransactionDetail(
                     row: selected,
                     categories: categories,
+                    weights: weights,
                     creditColor: creditColor,
+                    store: store,
                     onBack: { self.selected = nil },
-                    onSave: { categoryCode, subcategoryCode in
-                        await saveCategory(id: selected.id, category: categoryCode, subcategory: subcategoryCode)
+                    onSave: { correction in
+                        await saveTransaction(id: selected.id, correction: correction)
+                    },
+                    onDelete: {
+                        await deleteTransaction(id: selected.id)
                     }
                 )
             }
@@ -320,15 +433,54 @@ struct TransactionLedger: View {
                     if let weight = row.weightName, !weight.isEmpty {
                         Text(weight).personalText(.secondary, size: 13).fixedSize(horizontal: false, vertical: true)
                     }
+                    // A second, independent prompt: the category row above answers
+                    // "how is this grouped", this one answers "is the figure right".
+                    // Both can be true at once, so this is additive, not either/or.
+                    if row.currencyUncertain {
+                        currencyUncertainRow(row)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                Text(money(row))
-                    .font(.custom("Inter-SemiBold", size: 15))
-                    .foregroundStyle(row.direction == "IN" ? creditColor : palette.textPrimary)
-                    .multilineTextAlignment(.trailing)
-                    .fixedSize(horizontal: true, vertical: false)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(money(row))
+                        .font(.custom("Inter-SemiBold", size: 15))
+                        .foregroundStyle(row.direction == "IN" ? creditColor : palette.textPrimary)
+                        .multilineTextAlignment(.trailing)
+                        .fixedSize(horizontal: true, vertical: false)
+                    // The stated side only appears when it differs from the booked side,
+                    // so an ordinary domestic alert stays one line.
+                    if let stated = statedMoney(row) {
+                        Text(stated)
+                            .personalText(.secondary, size: 12)
+                            .multilineTextAlignment(.trailing)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                }
             }
         }
+    }
+
+    /// "Currency uncertain — review", reusing the "Needs a category — review" phrasing
+    /// so the two review prompts read as one family rather than two systems.
+    ///
+    /// The row says what it knows: the detected code and the evidence class that
+    /// produced it. "Review" opens the transaction, where the amount is editable.
+    private func currencyUncertainRow(_ row: LedgerTransaction) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: "exclamationmark.circle")
+                .font(.system(size: 11, weight: .semibold))
+            Text(currencyReviewLabel(row))
+                .font(.custom("Inter-SemiBold", size: 13))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .foregroundStyle(palette.accent)
+    }
+
+    /// The detected code plus how it was decided, when the API recorded a basis.
+    private func currencyReviewLabel(_ row: LedgerTransaction) -> String {
+        let code = (row.currency ?? "").trimmingCharacters(in: .whitespaces)
+        guard !code.isEmpty else { return "Currency uncertain — review" }
+        return "Currency uncertain (\(code)) — review"
     }
 
     private func rail<Content: View>(@ViewBuilder content: () -> Content) -> some View {
@@ -403,46 +555,48 @@ struct TransactionLedger: View {
         showDates = false
     }
 
-    private func saveCategory(id: String, category categoryCode: String, subcategory subcategoryCode: String?) async -> Bool {
-        var payload: [String: Any] = [
-            "category_id": categoryCode,
-            "apply_to_past": false,
-            "match_scope": "EXACT_MERCHANT",
-        ]
-        if let subcategoryCode {
-            payload["subcategory_id"] = subcategoryCode
-        }
-        guard let body = try? JSONSerialization.data(withJSONObject: payload) else { return false }
+    private func saveTransaction(id: String, correction: TransactionCorrection) async -> Bool {
+        guard !correction.isEmpty,
+              let body = try? JSONSerialization.data(withJSONObject: correction.payload) else { return false }
         let result = await api.submit(
             method: "PATCH",
-            path: "/v1/transactions/\(id)/category",
+            path: "/v1/transactions/\(id)",
             body: body,
             idempotencyKey: UUID().uuidString,
             token: token
         )
         guard (200..<300).contains(result.status) else { return false }
-        let chosen = categories.first { $0.code == categoryCode }
-        let categoryName = chosen?.name
-        let subcategoryName = chosen?.subcategories.first { $0.code == subcategoryCode }?.name
+        await refreshAfterWrite()
+        return true
+    }
+
+    private func deleteTransaction(id: String) async -> Bool {
+        let result = await api.submit(
+            method: "DELETE",
+            path: "/v1/transactions/\(id)",
+            body: nil,
+            idempotencyKey: UUID().uuidString,
+            token: token
+        )
+        guard (200..<300).contains(result.status) else { return false }
+        await refreshAfterWrite()
+        return true
+    }
+
+    /// A correction or a delete changes this page and the analytics behind the
+    /// insight cards, so both are reread from the server rather than patched locally.
+    private func refreshAfterWrite() async {
+        await loadFilters()
         if let data = await api.getJSON(path: path(cursor: nil), token: token),
            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             items = parseItems(root)
             nextCursor = root["nextCursor"] as? String
             known = true
         }
-        if let fresh = items.first(where: { $0.id == id }) {
-            selected = fresh
-        } else if let current = selected, current.id == id {
-            selected = current.withLabels(categoryName: categoryName, subcategoryName: subcategoryName, weightName: current.weightName)
-        }
-        if let index = items.firstIndex(where: { $0.id == id }), let selected, selected.id == id {
-            items[index] = selected
-        }
         if let store {
             await MainActor.run { store.invalidateInsights() }
         }
         await loadInsights()
-        return true
     }
 
     private func reload() async {
@@ -478,10 +632,10 @@ struct TransactionLedger: View {
 
     private func loadFilters() async {
         guard let data = await api.getJSON(path: "/v1/transaction-filters", token: token),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let rows = root["categories"] as? [[String: Any]] else {
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return
         }
+        let rows = root["categories"] as? [[String: Any]] ?? []
         categories = rows.compactMap { row in
             guard let code = row["code"] as? String, let name = row["name"] as? String else { return nil }
             let subs = (row["subcategories"] as? [[String: Any]] ?? []).compactMap { sub -> TransactionChoice? in
@@ -489,6 +643,11 @@ struct TransactionLedger: View {
                 return TransactionChoice(code: subCode, name: subName)
             }
             return TransactionCategory(code: code, name: name, subcategories: subs)
+        }
+        let weightRows = root["weights"] as? [[String: Any]] ?? []
+        weights = weightRows.compactMap { row in
+            guard let code = row["code"] as? String, let name = row["name"] as? String else { return nil }
+            return TransactionChoice(code: code, name: name)
         }
     }
 
@@ -537,16 +696,26 @@ struct TransactionLedger: View {
             guard let id = row["logicalTransactionId"] as? String, !id.isEmpty else { return nil }
             return LedgerTransaction(
                 id: id,
+                versionId: row["canonicalTransactionVersionId"] as? String,
                 amount: row["amount"] as? String,
                 currency: (row["currency"] as? String)?.trimmingCharacters(in: .whitespaces),
                 direction: row["direction"] as? String,
                 transactionDate: row["transactionDate"] as? String,
                 description: row["description"] as? String,
+                categoryCode: row["categoryCode"] as? String,
                 categoryName: row["categoryName"] as? String,
+                subcategoryCode: row["subcategoryCode"] as? String,
                 subcategoryName: row["subcategoryName"] as? String,
                 accountName: row["accountName"] as? String,
+                weightCode: row["weightCode"] as? String,
                 weightName: row["weightName"] as? String,
-                reference: row["reference"] as? String
+                reference: row["reference"] as? String,
+                statedAmount: (row["stated"] as? [String: Any])?["amount"] as? String,
+                statedCurrency: ((row["stated"] as? [String: Any])?["currency"] as? String)?
+                    .trimmingCharacters(in: .whitespaces),
+                currencyBasis: row["currencyBasis"] as? String,
+                currencyConfidence: (row["currencyConfidence"] as? NSNumber)?.doubleValue,
+                currencyUncertain: (row["currencyUncertain"] as? Bool) ?? false
             )
         }
     }
@@ -557,18 +726,32 @@ struct TransactionLedger: View {
         return "FigTxUser"
     }
 
+    /// The row's booked amount, in the row's own currency.
+    ///
+    /// The code comes from the row, never from a constant: a USD row in an INR
+    /// report is still USD. `minorUnits` comes from `ref.currency` via the
+    /// bootstrap, so a zero-decimal currency such as JPY does not grow two zeros.
     private func money(_ row: LedgerTransaction) -> String {
-        guard let amount = row.amount, let value = Double(amount.replacingOccurrences(of: ",", with: "")) else {
-            return "Not recorded"
-        }
-        let number = NumberFormatter()
-        number.numberStyle = .decimal
-        number.minimumFractionDigits = 2
-        number.maximumFractionDigits = 2
-        number.locale = .current
-        let text = number.string(from: NSNumber(value: value)) ?? amount
-        let currency = row.currency ?? ""
-        return currency.isEmpty ? text : "\(currency) \(text)"
+        let code = store?.displayCurrency(row: row.currency) ?? Money.currency(row: row.currency, account: nil, home: nil)
+        return Money.format(
+            raw: row.amount,
+            currency: code,
+            locale: store?.preferences?.moneyLocale ?? .current,
+            minorUnits: store?.minorUnits(for: code)
+        )
+    }
+
+    /// The *as stated* figure, shown beside the booked one when the alert named a
+    /// different currency. Absent for the ordinary single-currency alert.
+    private func statedMoney(_ row: LedgerTransaction) -> String? {
+        guard let currency = row.statedCurrency, !currency.isEmpty else { return nil }
+        guard let amount = row.statedAmount, !amount.isEmpty else { return nil }
+        return Money.format(
+            raw: amount,
+            currency: currency,
+            locale: store?.preferences?.moneyLocale ?? .current,
+            minorUnits: store?.minorUnits(for: currency)
+        )
     }
 
     private func heading(_ isoDate: String) -> String {
@@ -610,15 +793,44 @@ struct TransactionLedger: View {
 private struct TransactionDetail: View {
     var row: LedgerTransaction
     var categories: [TransactionCategory]
+    var weights: [TransactionChoice]
     var creditColor: Color
+    var store: UiSessionStore? = nil
     var onBack: () -> Void
-    var onSave: (String, String?) async -> Bool
+    var onSave: (TransactionCorrection) async -> Bool
+    var onDelete: () async -> Bool
     @Environment(\.colorScheme) private var colorScheme
-    @State private var picking = false
+    @State private var draft: TransactionDraft
+    @State private var pickingCategory = false
+    @State private var pickingWeight = false
     @State private var chosen: TransactionCategory?
     @State private var saving = false
+    @State private var confirmingDelete = false
+    @State private var error: String?
+
+    init(
+        row: LedgerTransaction,
+        categories: [TransactionCategory],
+        weights: [TransactionChoice],
+        creditColor: Color,
+        store: UiSessionStore? = nil,
+        onBack: @escaping () -> Void,
+        onSave: @escaping (TransactionCorrection) async -> Bool,
+        onDelete: @escaping () async -> Bool
+    ) {
+        self.row = row
+        self.categories = categories
+        self.weights = weights
+        self.creditColor = creditColor
+        self.store = store
+        self.onBack = onBack
+        self.onSave = onSave
+        self.onDelete = onDelete
+        _draft = State(initialValue: TransactionDraft(row: row))
+    }
 
     private var palette: PersonalPalette { colorScheme == .dark ? PersonalTokens.dark : PersonalTokens.light }
+    private var dirty: Bool { draft != TransactionDraft(row: row) }
 
     var body: some View {
         ScrollView {
@@ -633,14 +845,18 @@ private struct TransactionDetail: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Back")
-                    Text("Transaction").personalText(.primary, size: 22, weight: .bold)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(dirty ? "Edit transaction" : "Transaction")
+                            .personalText(.primary, size: 22, weight: .bold)
+                        Text("Recorded activity").personalText(.secondary, size: 15)
+                    }
                 }
                 VStack(alignment: .leading, spacing: PersonalSpace.s12) {
                     HStack(spacing: PersonalSpace.s12) {
-                        FigIcon(name: row.direction == "IN" ? "FigCashArrow" : (row.direction == "OUT" ? "FigUtensils" : "FigTxUser"), size: 28)
+                        FigIcon(name: draft.direction == "IN" ? "FigCashArrow" : (draft.direction == "OUT" ? "FigUtensils" : "FigTxUser"), size: 28)
                         Text(amount)
                             .font(.custom("Inter-Bold", size: 28))
-                            .foregroundStyle(row.direction == "IN" ? creditColor : palette.textPrimary)
+                            .foregroundStyle(draft.direction == "IN" ? creditColor : palette.textPrimary)
                     }
                     Text(row.description ?? "Transaction")
                         .personalText(.primary, size: 18, weight: .bold)
@@ -655,22 +871,54 @@ private struct TransactionDetail: View {
                         .stroke(palette.border, lineWidth: 1)
                 )
                 VStack(spacing: 0) {
-                    fact("Date", displayDate)
-                    fact("Type", row.direction == "IN" ? "Credit" : (row.direction == "OUT" ? "Debit" : "Not recorded"))
+                    field("Amount") {
+                        TextField("0.00", text: $draft.amount)
+                            .keyboardType(.decimalPad)
+                            .personalText(.primary, size: 15, weight: .bold)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    field("Type") {
+                        HStack(spacing: PersonalSpace.s8) {
+                            chip("Debit", on: draft.direction == "OUT") { draft.direction = "OUT" }
+                            chip("Credit", on: draft.direction == "IN") { draft.direction = "IN" }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+                    field("Date") {
+                        HStack(spacing: PersonalSpace.s8) {
+                            DatePicker(
+                                "",
+                                selection: dateBinding,
+                                displayedComponents: .date
+                            )
+                            .labelsHidden()
+                            .disabled(saving)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+                    field("Description") {
+                        TextField("What was this?", text: $draft.description, axis: .vertical)
+                            .personalText(.primary, size: 15, weight: .bold)
+                            .multilineTextAlignment(.trailing)
+                            .lineLimit(1...3)
+                    }
                     Button {
                         chosen = nil
-                        picking = true
+                        pickingCategory = true
                     } label: {
-                        fact("Category", recorded(row.categoryName))
+                        fact("Category", recorded(draft.categoryName))
                     }
                     .buttonStyle(.plain)
                     .disabled(categories.isEmpty || saving)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    fact("Subcategory", recorded(row.subcategoryName))
-                    fact("Account", recorded(row.accountName))
-                    if let weight = row.weightName, !weight.isEmpty {
-                        fact("Weight", weight)
+                    fact("Subcategory", recorded(draft.subcategoryName))
+                    Button {
+                        pickingWeight = true
+                    } label: {
+                        fact("Weight", recorded(draft.weightName))
                     }
+                    .buttonStyle(.plain)
+                    .disabled(weights.isEmpty || saving)
+                    fact("Account", recorded(row.accountName))
                     fact("Reference", recorded(row.reference))
                 }
                 .background(palette.surface, in: RoundedRectangle(cornerRadius: PersonalRadius.card, style: .continuous))
@@ -678,6 +926,37 @@ private struct TransactionDetail: View {
                     RoundedRectangle(cornerRadius: PersonalRadius.card, style: .continuous)
                         .stroke(palette.border, lineWidth: 1)
                 )
+                if let error {
+                    Text(error)
+                        .personalText(.secondary, size: 14, weight: .bold)
+                        .foregroundStyle(PersonalTokens.status.coralBorder)
+                }
+                VStack(spacing: PersonalSpace.s12) {
+                    Button(action: save) {
+                        Text(saving ? "Saving" : "Save changes")
+                            .font(.custom("Inter-Bold", size: 16))
+                            .foregroundStyle(PersonalTokens.action.label)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, PersonalSpace.s16)
+                            .background(
+                                saving || !dirty ? PersonalTokens.action.disabledFill : PersonalTokens.action.default,
+                                in: RoundedRectangle(cornerRadius: PersonalRadius.action, style: .continuous)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(saving || !dirty)
+                    Button {
+                        confirmingDelete = true
+                    } label: {
+                        Text("Delete transaction")
+                            .font(.custom("Inter-SemiBold", size: 15))
+                            .foregroundStyle(PersonalTokens.status.coralBorder)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, PersonalSpace.s12)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(saving)
+                }
             }
             .padding(.horizontal, PersonalSpace.s20)
             .padding(.top, PersonalSpace.s16)
@@ -685,7 +964,47 @@ private struct TransactionDetail: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(palette.canvas)
-        .sheet(isPresented: $picking) { categorySheet }
+        .sheet(isPresented: $pickingCategory) { categorySheet }
+        .sheet(isPresented: $pickingWeight) { weightSheet }
+        .confirmationDialog(
+            "Delete this transaction?",
+            isPresented: $confirmingDelete,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) { Task { await remove() } }
+            Button("Keep", role: .cancel) {}
+        } message: {
+            Text("\(recorded(row.description)) will be removed for good. Its totals leave every summary and insight.")
+        }
+    }
+
+    private var dateBinding: Binding<Date> {
+        Binding(
+            get: { Self.isoParser.date(from: draft.date) ?? Date() },
+            set: { draft.date = Self.isoFormatter.string(from: $0) }
+        )
+    }
+
+    private var weightSheet: some View {
+        NavigationStack {
+            List {
+                ForEach(weights) { weight in
+                    Button(weight.name) {
+                        draft.weightCode = weight.code
+                        draft.weightName = weight.name
+                        pickingWeight = false
+                    }
+                }
+            }
+            .navigationTitle("Weight")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { pickingWeight = false }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 
     private var categorySheet: some View {
@@ -693,17 +1012,33 @@ private struct TransactionDetail: View {
             List {
                 if let chosen {
                     if chosen.subcategories.isEmpty {
-                        Button(chosen.name) { Task { await commit(chosen.code, nil) } }
+                        Button(chosen.name) {
+                            draft.categoryCode = chosen.code
+                            draft.categoryName = chosen.name
+                            draft.subcategoryCode = nil
+                            draft.subcategoryName = nil
+                            pickingCategory = false
+                        }
                     } else {
                         ForEach(chosen.subcategories) { sub in
-                            Button(sub.name) { Task { await commit(chosen.code, sub.code) } }
+                            Button(sub.name) {
+                                draft.categoryCode = chosen.code
+                                draft.categoryName = chosen.name
+                                draft.subcategoryCode = sub.code == "none" ? nil : sub.code
+                                draft.subcategoryName = sub.name == "Not recorded" ? nil : sub.name
+                                pickingCategory = false
+                            }
                         }
                     }
                 } else {
                     ForEach(categories) { category in
                         Button(category.name) {
                             if category.subcategories.isEmpty {
-                                Task { await commit(category.code, nil) }
+                                draft.categoryCode = category.code
+                                draft.categoryName = category.name
+                                draft.subcategoryCode = nil
+                                draft.subcategoryName = nil
+                                pickingCategory = false
                             } else {
                                 self.chosen = category
                             }
@@ -719,44 +1054,84 @@ private struct TransactionDetail: View {
                         Button("Categories") { chosen = nil }
                     }
                 }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { pickingCategory = false }
+                }
             }
         }
         .presentationDetents([.medium, .large])
     }
 
-    private func commit(_ category: String, _ subcategory: String?) async {
-        saving = true
-        defer { saving = false }
-        if await onSave(category, subcategory) {
-            picking = false
+    private func save() {
+        if let problem = draft.error {
+            error = problem
+            return
         }
+        let correction = draft.corrections(against: row)
+        guard !correction.isEmpty else {
+            onBack()
+            return
+        }
+        Task {
+            saving = true
+            error = nil
+            let ok = await onSave(correction)
+            saving = false
+            if ok {
+                onBack()
+            } else {
+                error = "The change could not be saved."
+            }
+        }
+    }
+
+    private func remove() async {
+        saving = true
+        let ok = await onDelete()
+        saving = false
+        if ok {
+            onBack()
+        } else {
+            error = "The transaction could not be deleted."
+        }
+    }
+
+    private func field<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: PersonalSpace.s12) {
+            Text(label)
+                .personalText(.secondary, size: 15)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+            content()
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .padding(.horizontal, PersonalSpace.s16)
+        .padding(.vertical, PersonalSpace.s12)
+        .opacity(saving ? 0.55 : 1)
+    }
+
+    private func chip(_ title: String, on: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.custom("Inter-SemiBold", size: 14))
+                .foregroundStyle(on ? PersonalTokens.action.label : palette.textSecondary)
+                .lineLimit(1)
+                .padding(.horizontal, PersonalSpace.s16)
+                .padding(.vertical, PersonalSpace.s8)
+                .background(on ? PersonalTokens.action.default : palette.surface, in: Capsule())
+                .overlay(Capsule().stroke(on ? PersonalTokens.action.default : palette.border, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .disabled(saving)
     }
 
     private var amount: String {
-        guard let raw = row.amount, let value = Double(raw.replacingOccurrences(of: ",", with: "")) else {
-            return "Not recorded"
-        }
-        let number = NumberFormatter()
-        number.numberStyle = .decimal
-        number.minimumFractionDigits = 2
-        number.maximumFractionDigits = 2
-        number.locale = .current
-        let text = number.string(from: NSNumber(value: value)) ?? raw
-        let currency = row.currency ?? ""
-        return currency.isEmpty ? text : "\(currency) \(text)"
-    }
-
-    private var displayDate: String {
-        guard let iso = row.transactionDate else { return "Not recorded" }
-        let parser = DateFormatter()
-        parser.calendar = Calendar(identifier: .gregorian)
-        parser.locale = Locale(identifier: "en_US_POSIX")
-        parser.dateFormat = "yyyy-MM-dd"
-        guard let date = parser.date(from: iso) else { return iso }
-        let formatter = DateFormatter()
-        formatter.locale = .current
-        formatter.setLocalizedDateFormatFromTemplate("d MMMM yyyy")
-        return formatter.string(from: date)
+        Money.format(
+            raw: draft.amount,
+            currency: Money.currency(row: row.currency, account: nil, home: store?.preferences?.defaultCurrencyCode),
+            locale: store?.preferences?.moneyLocale ?? .current,
+            minorUnits: store?.minorUnits(for: row.currency)
+        )
     }
 
     private func recorded(_ value: String?) -> String {
@@ -779,4 +1154,20 @@ private struct TransactionDetail: View {
         .padding(.horizontal, PersonalSpace.s16)
         .padding(.vertical, PersonalSpace.s12)
     }
+
+    private static let isoParser: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
+    private static let isoFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
 }

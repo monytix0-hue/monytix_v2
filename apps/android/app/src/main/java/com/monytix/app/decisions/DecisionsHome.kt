@@ -40,11 +40,10 @@ import androidx.compose.ui.unit.sp
 import com.monytix.app.R
 import com.monytix.app.auth.MonytixApi
 import com.monytix.app.theme.FigIcon
+import com.monytix.app.shell.Money
 import com.monytix.app.theme.LocalPersonalTheme
 import com.monytix.app.theme.PersonalRadius
 import com.monytix.app.theme.PersonalSpace
-import java.text.NumberFormat
-import java.util.Locale
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -247,13 +246,20 @@ private fun <T> lines(rows: JSONArray?, map: (JSONObject) -> T): List<T> {
     }
 }
 
-private fun money(raw: String?): String? {
+/**
+ * A decision's figure.
+ *
+ * A decision copy may already carry a formatted string ("₹48,000"); leave it alone,
+ * because re-parsing it would need to know which locale wrote its separators.
+ * Otherwise the amount is rendered in the owner's home currency, which is the
+ * currency a decision about their money is expressed in.
+ */
+private fun money(raw: String?, currency: String? = null): String? {
     if (raw.isNullOrBlank()) return null
-    if (raw.contains("₹")) return raw
-    val amount = raw.replace(",", "").toDoubleOrNull() ?: return raw
-    val format = NumberFormat.getCurrencyInstance(Locale("en", "IN"))
-    format.maximumFractionDigits = 0
-    return format.format(amount)
+    if (raw.any { it == '₹' || it == '$' || it == '€' || it == '£' }) return raw
+    val amount = Money.parse(raw) ?: return raw
+    val code = Money.currency(currency)
+    return Money.format(amount, code, maximumFractionDigits = 0)
 }
 
 @Composable

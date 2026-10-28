@@ -30,6 +30,14 @@ class UiSessionStore(
     var mileEventsJson by mutableStateOf<String?>(null)
         private set
 
+    /** The owner's home currency, timezone and country, from the same single prefetch. */
+    var preferences by mutableStateOf<OwnerPreferences?>(null)
+        private set
+
+    /** Formatting facts for the currencies this owner holds, keyed by ISO code. */
+    var currencyFormats by mutableStateOf<Map<String, CurrencyFormat>>(emptyMap())
+        private set
+
     var liveReady by mutableStateOf(false)
         private set
     var decisionsReady by mutableStateOf(false)
@@ -56,6 +64,8 @@ class UiSessionStore(
         missionDefinitionsJson = root.optJSONObject("mission_definitions")?.toString()
         mileSummaryJson = root.optJSONObject("mile_summary")?.toString()
         mileEventsJson = root.optJSONObject("mile_events")?.toString()
+        preferences = OwnerPreferences.from(root.optJSONObject("preferences"))
+        currencyFormats = parseCurrencyFormats(root.optJSONObject("currency_formats"))
         markReady()
     }
 
@@ -113,11 +123,37 @@ class UiSessionStore(
         missionDefinitionsJson = null
         mileSummaryJson = null
         mileEventsJson = null
+        preferences = null
+        currencyFormats = emptyMap()
         insightCache.clear()
         liveReady = false
         decisionsReady = false
         missionsReady = false
         mileReady = false
+    }
+
+    /**
+     * Minor units for a code, from `ref.currency` when the bootstrap shipped it.
+     * `null` means "use the platform's default", which is right for every code the
+     * server can detect.
+     */
+    fun minorUnits(currency: String?): Int? =
+        currency?.uppercase(java.util.Locale.ROOT)?.let { currencyFormats[it]?.minorUnits }
+
+    /** The currency a row should be rendered in: its own, else the home currency. */
+    fun displayCurrency(row: String?, account: String? = null): String? =
+        Money.currency(row, account, preferences?.defaultCurrencyCode)
+
+    private fun parseCurrencyFormats(root: JSONObject?): Map<String, CurrencyFormat> {
+        if (root == null) return emptyMap()
+        val out = mutableMapOf<String, CurrencyFormat>()
+        val keys = root.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            val code = key.uppercase(java.util.Locale.ROOT)
+            CurrencyFormat.from(code, root.optJSONObject(key))?.let { out[code] = it }
+        }
+        return out
     }
 
     private fun markReady() {

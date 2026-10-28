@@ -1,3 +1,7 @@
+import { identifyBank as identifyInstitutionBank, type StatementBank } from "./institutions.js";
+
+export type { StatementBank } from "./institutions.js";
+
 export type PipelineTarget = "BANKING" | "MUTUAL_FUNDS" | "INSURANCE" | "PORTFOLIO_CAS";
 
 const mutualFunds = new Set(["cams", "kfintech", "camsonline"]);
@@ -18,24 +22,15 @@ export function detectPipelineTarget(filename: string, fromAddress: string): Pip
   return "BANKING";
 }
 
-export type StatementBank = "HDFC" | "ICICI" | "SBI" | "AXIS";
-
+/**
+ * The narration overlay to use for a statement, or null.
+ *
+ * Delegates to `ref.institution`'s mirror in `institutions.ts`. A non-Indian
+ * sender now returns null instead of being unrecognised *and* unrunnable: the
+ * document is still ingested, just without a bank-specific regex overlay.
+ */
 export function identifyBank(filename: string, fromAddress: string): StatementBank | null {
-  const tokens = wholeTokens(`${filename} ${fromAddress}`);
-  const found = new Set<StatementBank>();
-  if (tokens.has("hdfc") || tokens.has("hdfcbank")) {
-    found.add("HDFC");
-  }
-  if (tokens.has("icici") || tokens.has("icicibank")) {
-    found.add("ICICI");
-  }
-  if (tokens.has("sbi") || tokens.has("sbin")) {
-    found.add("SBI");
-  }
-  if (tokens.has("axis") || tokens.has("axisbank") || tokens.has("utib")) {
-    found.add("AXIS");
-  }
-  return found.size === 1 ? [...found][0] : null;
+  return identifyInstitutionBank(filename, fromAddress);
 }
 
 function wholeTokens(value: string): Set<string> {

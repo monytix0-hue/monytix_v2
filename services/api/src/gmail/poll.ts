@@ -1,14 +1,17 @@
 import { parseTransactionFromEmail, spotIdempotencyKey, type SpotAlert } from "./alertParser.js";
+import { senderCountry } from "./institutions.js";
+import { resolveLocalePack, searchQueryFor, type LocalePack } from "./locales/index.js";
 import { redactGmailLog } from "./log.js";
 import { extractMimeMessage, messageDate, messageFrom, messageSubject, type ExtractedText } from "./mime.js";
 import { readDueDate } from "./reminders.js";
 
 const gmailApi = "https://gmail.googleapis.com/gmail/v1/users/me";
-export const spotTxnQuery = [
-  "newer_than:365d",
-  "-filename:pdf -filename:csv -filename:xls -filename:xlsx",
-  '("debited" OR "credited" OR "spent" OR "sent" OR "received" OR "paid" OR "transaction alert")',
-].join(" ");
+/**
+ * The default alert search: the Indian pack's verbs. Kept exported because it is
+ * the contract other modules and tests assert on; per-owner search uses
+ * `searchQueryFor(pack)` with the owner's own market.
+ */
+export const spotTxnQuery = searchQueryFor(resolveLocalePack({ country: "IN" }));
 const reminderQuery = 'newer_than:90d (subject:due OR subject:premium OR subject:renewal OR subject:"amount due")';
 
 export type PollFetch = (url: string, init?: RequestInit) => Promise<PollResponse>;
@@ -25,6 +28,14 @@ export type PollConnection = {
   refreshToken: string;
   historyCheckpoint: string | null;
   initialWindowDrained: boolean;
+  /** Owner's market, for the vocabulary pack and the currency fallback. */
+  country?: string | null;
+  /** Owner's locale tag, e.g. `de-DE`. */
+  locale?: string | null;
+  /** Owner's IANA timezone, for alert timestamps that carry no offset. */
+  timezone?: string | null;
+  /** Owner's home currency. The detector terminates here. */
+  defaultCurrency?: string | null;
 };
 
 export type SpotSave = {
@@ -32,6 +43,11 @@ export type SpotSave = {
   idempotencyKey: string;
   flow: SpotAlert["flow"];
   amount: string;
+  currency: string;
+  currencyBasis: string;
+  currencyConfidence: number;
+  statedAmount?: string;
+  statedCurrency?: string;
   accountLast4?: string;
   paymentRef?: string;
   channel: SpotAlert["channel"];
@@ -58,6 +74,7 @@ export type PollPorts = {
     messageId: string;
     biller: string;
     amount: string;
+    currency: string;
     dueDate: string;
     category: string;
   }) => Promise<void>;
@@ -107,7 +124,10 @@ export async function pollConnection(connection: PollConnection, ports: PollPort
 
 async function searchMailbox(connection: PollConnection, accessToken: string, ports: PollPorts): Promise<PollResult> {
   let totals = emptyPoll;
-  const alerts = await listAllMatchingMessages(ports.fetchImpl, accessToken, spotTxnQuery);
+  const locale = packFor(connection);
+  // The search terms follow the owner's market. A German owner's mail says
+  // "belastet", which the English query would never match.
+  const alerts = await listAllMatchingMessages(ports.fetchImpl, accessToken, searchQueryFor(locale));
   for (const messageId of alerts) {
     totals = addPoll(totals, await readMessage(connection, accessToken, messageId, true, ports));
   }
@@ -121,6 +141,10 @@ async function searchMailbox(connection: PollConnection, accessToken: string, po
     await ports.setCheckpoint(historyId);
   }
   return totals;
+}
+
+function packFor(connection: PollConnection): LocalePack {
+  return resolveLocalePack({ country: connection.country, locale: connection.locale });
 }
 
 async function readMessage(
@@ -146,6 +170,11 @@ async function readMessage(
     raw,
   });
   const body = alertBody(extracted.texts);
+  const locale = packFor(connection);
+  const sender = messageFrom(raw);
+  // The sender's bank country outranks the owner's: a Chase alert on an Indian
+  // owner's mailbox is USD, whatever the owner's home currency is.
+  const institutionCountry = senderCountry(sender);
   if (!ports.dryRun) {
     for (const candidate of extracted.candidates) {
       await ports.saveCandidate({
@@ -156,7 +185,14 @@ async function readMessage(
         provenance: candidate.provenance,
       });
     }
-    const reminder = readDueDate(body);
+    const reminder = readDueDate(body, {
+      locale,
+      defaultCurrency: connection.defaultCurrency ?? null,
+      country: connection.country ?? null,
+      sender,
+      institutionCountry,
+      localeTag: connection.locale ?? null,
+    });
     if (reminder) {
       await ports.saveDueDate({ messageId, ...reminder });
     }
@@ -167,12 +203,18 @@ async function readMessage(
   const alert = parseTransactionFromEmail(body, {
     postedAt: messageDate(raw),
     subject: messageSubject(raw),
+    locale,
+    timezone: connection.timezone ?? undefined,
+    defaultCurrency: connection.defaultCurrency ?? undefined,
+    country: connection.country ?? null,
+    sender,
+    institutionCountry,
   });
   if (!alert) {
     const entry = redactGmailLog({
       event: "gmail_unparsed_alert",
       messageId,
-      from: messageFrom(raw),
+      from: sender,
       excerpt: body.slice(0, 240),
     });
     (ports.debug ?? logDryRun)(entry as Record<string, unknown>);
@@ -196,6 +238,12 @@ async function readMessage(
     idempotencyKey: spotIdempotencyKey(connection.ownerId, alert, messageId),
     flow: alert.flow,
     amount: alert.amount,
+    currency: alert.currency,
+    currencyBasis: alert.currencyBasis,
+    currencyConfidence: alert.currencyConfidence,
+    ...(alert.statedAmount && alert.statedCurrency
+      ? { statedAmount: alert.statedAmount, statedCurrency: alert.statedCurrency }
+      : {}),
     accountLast4: alert.accountLast4,
     paymentRef: alert.paymentRef,
     channel: alert.channel,

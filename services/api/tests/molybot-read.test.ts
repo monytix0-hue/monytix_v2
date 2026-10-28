@@ -8,7 +8,7 @@ test("MolyBot refuses a partial loan answer when more than one page matches", as
   const signed = await signToken({ subject: "molybot-limit", expiresIn: "1h" });
   const ledger: LedgerRead = {
     async transactionFilters() {
-      return { categories: [] };
+      return { categories: [], weights: [] };
     },
     async listTransactions(input): Promise<TransactionPage> {
       if (input.eventFamily === "LOAN_REPAYMENT") {

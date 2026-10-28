@@ -12,7 +12,7 @@ function ledger(overrides: Partial<LedgerRead> = {}): LedgerRead {
       return emptyPage;
     },
     async transactionFilters() {
-      return { categories: [] };
+      return { categories: [], weights: [] };
     },
     async accountSummaries() {
       return [];

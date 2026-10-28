@@ -1,10 +1,13 @@
 import type { FastifyPluginAsync } from "fastify";
 import { displayTransactionTitle } from "../live/displayTitle.js";
+import type { PreferencesStore } from "../preferences/index.js";
 import type { LedgerRead, TransactionItem } from "./read.js";
 import { decodeCursor } from "./read.js";
 
 export type LedgerRouteOptions = {
   ledger?: LedgerRead | null;
+  /** Supplies the owner's home currency when a request names no display currency. */
+  preferences?: PreferencesStore | null;
 };
 
 const dateText = /^\d{4}-\d{2}-\d{2}$/;
@@ -38,6 +41,20 @@ function monthRange(now = new Date()): { from: string; to: string } {
 
 export const ledgerRoutes: FastifyPluginAsync<LedgerRouteOptions> = async (app, options) => {
   const ledger = options.ledger ?? null;
+  const preferences = options.preferences ?? null;
+
+  /**
+   * An explicit `display_currency` wins; otherwise the owner's home currency is
+   * used. Both `currency` (booked filter) and `display_currency` may be present:
+   * the first scopes rows, the second decides the converted roll-up.
+   */
+  async function displayCurrencyFor(ownerId: string, requested: string | null): Promise<string | null> {
+    if (requested) return requested;
+    if (!preferences) return null;
+    const stored = await preferences.read(ownerId);
+    const home = stored?.defaultCurrencyCode ?? null;
+    return home && currencyText.test(home) ? home : null;
+  }
 
   app.get("/v1/transactions", async (request, reply) => {
     if (!request.actorId) {
@@ -119,10 +136,17 @@ export const ledgerRoutes: FastifyPluginAsync<LedgerRouteOptions> = async (app, 
     const from = queryText(query.from);
     const to = queryText(query.to);
     const currency = queryText(query.currency);
-    if ((from && !dateText.test(from)) || (to && !dateText.test(to)) || (currency && !currencyText.test(currency))) {
+    const requestedDisplay = queryText(query.display_currency) ?? queryText(query.displayCurrency);
+    if (
+      (from && !dateText.test(from))
+      || (to && !dateText.test(to))
+      || (currency && !currencyText.test(currency))
+      || (requestedDisplay && !currencyText.test(requestedDisplay))
+    ) {
       return reply.status(422).send({ error: "invalid_request" });
     }
-    const overview = await ledger.overview({ ownerId: request.ownerId, from, to, currency });
+    const displayCurrency = await displayCurrencyFor(request.ownerId, requestedDisplay);
+    const overview = await ledger.overview({ ownerId: request.ownerId, from, to, currency, displayCurrency });
     return { contract: "finance-overview-v0.1", ...overview };
   });
 
@@ -137,10 +161,17 @@ export const ledgerRoutes: FastifyPluginAsync<LedgerRouteOptions> = async (app, 
     const from = queryText(query.from);
     const to = queryText(query.to);
     const currency = queryText(query.currency);
-    if ((from && !dateText.test(from)) || (to && !dateText.test(to)) || (currency && !currencyText.test(currency))) {
+    const requestedDisplay = queryText(query.display_currency) ?? queryText(query.displayCurrency);
+    if (
+      (from && !dateText.test(from))
+      || (to && !dateText.test(to))
+      || (currency && !currencyText.test(currency))
+      || (requestedDisplay && !currencyText.test(requestedDisplay))
+    ) {
       return reply.status(422).send({ error: "invalid_request" });
     }
-    const insights = await ledger.insights({ ownerId: request.ownerId, from, to, currency });
+    const displayCurrency = await displayCurrencyFor(request.ownerId, requestedDisplay);
+    const insights = await ledger.insights({ ownerId: request.ownerId, from, to, currency, displayCurrency });
     return { contract: "ledger-insights-v0.1", ...insights };
   });
 

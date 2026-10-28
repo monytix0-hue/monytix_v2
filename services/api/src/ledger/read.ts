@@ -1,5 +1,8 @@
 import pg from "pg";
 import { openPool } from "../db/pool.js";
+import { createFxReader, type FxReader } from "../money/fx.js";
+import { reviewThreshold } from "../money/detect.js";
+import { convertRows, moneyText, type ConvertedMonthlyRow, type ConvertedTotals, type FxGap } from "./display.js";
 
 export type LedgerRead = {
   listTransactions(input: ListInput): Promise<TransactionPage>;
@@ -34,6 +37,7 @@ export type CategoryFilter = FilterChoice & {
 
 export type TransactionFilters = {
   categories: CategoryFilter[];
+  weights: FilterChoice[];
 };
 
 export type TransactionItem = {
@@ -51,7 +55,26 @@ export type TransactionItem = {
   subcategoryName: string | null;
   accountName: string | null;
   weightName: string | null;
+  weightCode: string | null;
   reference: string | null;
+  /**
+   * The other two layers of money the plan names.
+   *
+   * `amount`/`currency` above are *as booked*. `stated` is *as stated*: what the
+   * alert wrote before the issuer converted it, carried on the canonical row's
+   * `original_*` pair. It is `null` when the alert named one currency only, which
+   * means "same as booked", not "unknown".
+   */
+  stated: { amount: string | null; currency: string | null } | null;
+  /**
+   * How sure the parser was that `currency` is right, and why. `basis` is the
+   * evidence class (`EXPLICIT_ISO`, `TLD_OR_COUNTRY`, `OWNER_DEFAULT`, ...).
+   * A low confidence is what raises the "Currency uncertain — review" row rather
+   * than letting a guessed code pass as booked truth.
+   */
+  currencyBasis: string | null;
+  currencyConfidence: number | null;
+  currencyUncertain: boolean;
   duplicateOutcome: string;
   changeProvenance: string;
   financialEvent: {
@@ -103,11 +126,28 @@ export type OverviewInput = {
   from: string | null;
   to: string | null;
   currency: string | null;
+  /**
+   * Convert each row into this currency at its own date. Booked figures stay in
+   * the response; the converted roll-up is additive.
+   */
+  displayCurrency?: string | null;
 };
 
 export type Overview = {
   from: string | null;
   to: string | null;
+  /** The currency every `converted` block is expressed in, when one was asked for. */
+  displayCurrency: string | null;
+  /** Present only when `displayCurrency` was requested. */
+  displayTotals?: {
+    currency: string;
+    inflow: string;
+    outflow: string;
+    ordinaryOutflow: string;
+    complete: boolean;
+    missingRows: number;
+    gaps: FxGap[];
+  };
   currencies: Array<{
     currency: string;
     inflow: string;
@@ -118,6 +158,16 @@ export type Overview = {
     uses: Array<{ status: string; code: string | null; count: number }>;
     transactionsWithoutEvent: number;
     transactionsWithoutUse: number;
+    /** Converted at each row's own date. Additive; the booked figures above are unchanged. */
+    converted?: {
+      currency: string;
+      inflow: string;
+      outflow: string;
+      ordinaryOutflow: string;
+      complete: boolean;
+      missingRows: number;
+      gaps: FxGap[];
+    };
   }>;
 };
 
@@ -126,23 +176,37 @@ export type InsightsInput = {
   from: string | null;
   to: string | null;
   currency: string | null;
+  /** Convert the summary into this currency. Booked totals are unchanged. */
+  displayCurrency?: string | null;
 };
 
 export type Insights = {
   uncategorised: number;
   currency: string | null;
+  /** The currency the `converted` block is expressed in, when one was asked for. */
+  displayCurrency?: string | null;
   totals: {
     credit: string;
     debit: string;
     categorisedOutflow: string;
     uncategorisedOutflow: string;
   };
+  /**
+   * The same four figures in `displayCurrency`. Present only when one was
+   * requested. `complete: false` means some rows had no rate and are excluded.
+   */
+  converted?: ConvertedTotals;
   monthlySummary: Array<{
     month: string;
     credit: string;
     debit: string;
     openingBalance: string;
     closingBalance: string;
+    /**
+     * Converted figures for the month. Booked strings above are untouched, so
+     * nothing in this object ever mixes two currencies.
+     */
+    converted?: ConvertedMonthlyRow;
   }>;
   spendingAnalysis: {
     categories: Record<string, {
@@ -150,6 +214,9 @@ export type Insights = {
       totalAmount: string;
       subcategories: Record<string, string>;
       subcategoryNames: Record<string, string>;
+      /** Converted total for this slice, when a display currency was requested. */
+      convertedAmount?: string;
+      fxMissing?: boolean;
     }>;
   };
 };
@@ -176,8 +243,13 @@ type Row = {
   subcategory_name: string | null;
   account_display_name: string | null;
   weight_name: string | null;
+  weight_code: string | null;
   source_reference: string | null;
   taxonomy_version: string | null;
+  original_amount: string | null;
+  original_currency_code: string | null;
+  currency_basis: string | null;
+  currency_confidence: string | null;
   purpose_status: string | null;
   purpose_code: string | null;
   party_status: string | null;
@@ -271,7 +343,12 @@ const listColumns = `
   sub.display_name AS subcategory_name,
   fa.account_display_name,
   wm.name AS weight_name,
+  mw.primary_weight_code::text AS weight_code,
   cv.source_reference,
+  cv.original_amount,
+  cv.original_currency_code,
+  spot.currency_basis,
+  spot.currency_confidence::text AS currency_confidence,
   c.taxonomy_version,
   p.purpose_status,
   p.purpose_code,
@@ -285,6 +362,10 @@ FROM (
   SELECT cv.logical_transaction_id, cv.canonical_transaction_version_id, cv.financial_account_id,
          cv.amount, cv.currency_code, cv.direction, cv.transaction_date, cv.raw_description,
          cv.duplicate_outcome, cv.change_provenance, cv.source_reference,
+         cv.original_amount, cv.original_currency_code,
+         -- Guarded: a non-uuid metadata value would raise rather than return NULL.
+         CASE WHEN lt.identity_metadata->>'gmail_spot_id' ~ '^[0-9a-f]{8}-[0-9a-f]{4}-'
+              THEN (lt.identity_metadata->>'gmail_spot_id')::uuid END AS gmail_spot_id,
          COALESCE(choice.category_code, resolved.category_code) AS chosen_category,
          COALESCE(choice.subcategory_code, resolved.subcategory_code) AS chosen_subcategory
     FROM core.canonical_transaction_version cv
@@ -298,6 +379,9 @@ ${interpretationJoins}
 LEFT JOIN core.financial_account fa ON fa.financial_account_id = cv.financial_account_id
 LEFT JOIN core.movement_weight mw ON mw.logical_transaction_id = cv.logical_transaction_id
 LEFT JOIN human_context.weight_master wm ON wm.code = mw.primary_weight_code
+-- The spot is the only place the detector's evidence is recorded, and its RLS
+-- policy is owner-scoped, so a row that is not this owner's simply does not join.
+LEFT JOIN core.gmail_spot_transaction spot ON spot.gmail_spot_transaction_id = cv.gmail_spot_id
 LEFT JOIN ref.taxonomy_category cat
   ON cat.taxonomy_version = 'F10E-v1.2' AND cat.category_code = cv.chosen_category
 LEFT JOIN ref.taxonomy_subcategory sub
@@ -330,6 +414,7 @@ ${interpretationJoins}
 LEFT JOIN core.financial_account fa ON fa.financial_account_id = cv.financial_account_id
 LEFT JOIN core.movement_weight mw ON mw.logical_transaction_id = cv.logical_transaction_id
 LEFT JOIN human_context.weight_master wm ON wm.code = mw.primary_weight_code
+LEFT JOIN core.gmail_spot_transaction spot ON spot.gmail_spot_transaction_id = cv.gmail_spot_id
 LEFT JOIN ref.taxonomy_category cat
    ON cat.taxonomy_version = 'F10E-v1.2' AND cat.category_code = cv.chosen_category
 LEFT JOIN ref.taxonomy_subcategory sub
@@ -369,6 +454,42 @@ function dateText(value: Date | string | null): string | null {
   return String(value).slice(0, 10);
 }
 
+/**
+ * The *as stated* pair, or null when the alert named one currency.
+ *
+ * `core.canonical_transaction_version.original_*` is only populated when the card
+ * alert actually stated a foreign amount. A NULL therefore means "same as booked",
+ * and the client shows one number rather than a second "unknown" figure.
+ */
+function statedMoney(row: Row): { amount: string | null; currency: string | null } | null {
+  const amount = row.original_amount;
+  const currency = row.original_currency_code?.trim() ?? null;
+  if (amount === null && currency === null) return null;
+  // A stated pair that equals the booked pair is not a second layer of money.
+  if (currency !== null && currency === (row.currency_code?.trim() ?? null)) return null;
+  return { amount, currency };
+}
+
+/**
+ * Whether the ledger should ask before trusting the booked currency.
+ *
+ * Three ways to be uncertain, and they are not the same:
+ *   - the row has no currency at all, which is a defect rather than a guess;
+ *   - the parser recorded no confidence (a spot promoted before the detector
+ *     existed), so the code is booked but unverified;
+ *   - the parser recorded a confidence below the review threshold.
+ *
+ * Only the last two are "review"; a missing currency is surfaced the same way
+ * because a row the owner cannot read is worse than a row that asks.
+ */
+function isCurrencyUncertain(row: Row): boolean {
+  const code = row.currency_code?.trim() ?? "";
+  if (code.length === 0) return true;
+  if (row.currency_confidence === null) return true;
+  const confidence = Number(row.currency_confidence);
+  return !Number.isFinite(confidence) || confidence < reviewThreshold;
+}
+
 function mapItem(row: Row): TransactionItem {
   return {
     logicalTransactionId: row.logical_transaction_id,
@@ -385,7 +506,12 @@ function mapItem(row: Row): TransactionItem {
     subcategoryName: row.subcategory_name,
     accountName: row.account_display_name,
     weightName: row.weight_name,
+    weightCode: row.weight_code,
     reference: row.source_reference,
+    stated: statedMoney(row),
+    currencyBasis: row.currency_basis,
+    currencyConfidence: row.currency_confidence === null ? null : Number(row.currency_confidence),
+    currencyUncertain: isCurrencyUncertain(row),
     duplicateOutcome: row.duplicate_outcome,
     changeProvenance: row.change_provenance,
     financialEvent: row.resolution_outcome
@@ -414,8 +540,10 @@ function mapItem(row: Row): TransactionItem {
   };
 }
 
-export function createLedgerRead(databaseUrl: string): LedgerRead {
+export function createLedgerRead(databaseUrl: string, options: { fx?: FxReader } = {}): LedgerRead {
   const pool = openPool(databaseUrl);
+  // Display conversion is read-only and cached; one reader per process is enough.
+  const fx = options.fx ?? createFxReader(databaseUrl);
 
   async function withOwner<T>(ownerId: string, read: (client: pg.PoolClient) => Promise<T>): Promise<T> {
     const client = await pool.connect();
@@ -521,7 +649,16 @@ export function createLedgerRead(databaseUrl: string): LedgerRead {
         if (uncategorized) {
           categories.push({ code: "none", name: "Not recorded", subcategories: [] });
         }
-        return { categories };
+        const weights = await client.query<{ code: string; name: string }>(
+          `SELECT code::text AS code, name
+             FROM human_context.weight_master
+            WHERE is_active
+            ORDER BY display_order`,
+        );
+        return {
+          categories,
+          weights: weights.rows.map((row) => ({ code: row.code, name: row.name })),
+        };
       });
     },
 
@@ -689,20 +826,148 @@ export function createLedgerRead(databaseUrl: string): LedgerRead {
             ORDER BY currency_code`,
           [input.from, input.to, excludedOrdinaryFamilies, input.currency],
         );
+
+        const display = (input.displayCurrency ?? "").trim().toUpperCase();
+        const convertedByCurrency = new Map<string, {
+          currency: string;
+          inflow: string;
+          outflow: string;
+          ordinaryOutflow: string;
+          complete: boolean;
+          missingRows: number;
+          gaps: FxGap[];
+        }>();
+        let displayTotals: Overview["displayTotals"];
+
+        if (/^[A-Z]{3}$/.test(display)) {
+          // Convert row by row, because each transaction has its own date. The booked
+          // aggregates above cannot be converted at one spot rate without inventing a
+          // number that reconciles with nothing.
+          const rows = await client.query<{
+            currency_code: string;
+            amount: string;
+            direction: string;
+            transaction_date: Date | string | null;
+            ordinary: boolean;
+          }>(
+            `SELECT cv.currency_code, cv.amount::text AS amount, cv.direction,
+                    cv.transaction_date,
+                    (e.resolution_outcome = 'RESOLVED' AND e.event_family <> ALL ($3::text[])) AS ordinary
+               FROM core.canonical_transaction_version cv
+               JOIN core.logical_transaction lt ON lt.logical_transaction_id = cv.logical_transaction_id
+               LEFT JOIN intel.financial_event_resolution e
+                 ON e.logical_transaction_id = cv.logical_transaction_id
+                AND e.canonical_transaction_version_id = cv.canonical_transaction_version_id
+                AND e.is_current
+              WHERE cv.is_current
+                AND lt.identity_status = 'ACTIVE'
+                AND cv.duplicate_outcome <> 'EQUIVALENT_SUPERSEDED'
+                AND cv.amount IS NOT NULL
+                AND cv.currency_code IS NOT NULL
+                AND ($1::date IS NULL OR cv.transaction_date >= $1)
+                AND ($2::date IS NULL OR cv.transaction_date <= $2)
+                AND ($4::text IS NULL OR cv.currency_code = $4)`,
+            [input.from, input.to, excludedOrdinaryFamilies, input.currency],
+          );
+
+          type Bucket = { inflow: number; outflow: number; ordinary: number; gaps: FxGap[]; missing: number };
+          const buckets = new Map<string, Bucket>();
+          const totals: Bucket & { currency: string } = {
+            currency: display,
+            inflow: 0,
+            outflow: 0,
+            ordinary: 0,
+            gaps: [],
+            missing: 0,
+          };
+
+          for (const row of rows.rows) {
+            const code = row.currency_code.trim();
+            const date = row.transaction_date
+              ? (row.transaction_date instanceof Date
+                ? row.transaction_date.toISOString().slice(0, 10)
+                : String(row.transaction_date).slice(0, 10))
+              : null;
+            const amount = Number(row.amount);
+            if (!Number.isFinite(amount)) continue;
+
+            const bucket = buckets.get(code) ?? { inflow: 0, outflow: 0, ordinary: 0, gaps: [], missing: 0 };
+            const result = await convertRows(fx, [{
+              amount,
+              currency: code,
+              date,
+            }], display);
+            const value = result.complete ? result.total : 0;
+            if (!result.complete) {
+              bucket.missing += result.missingRows;
+              totals.missing += result.missingRows;
+              for (const gap of result.gaps) {
+                if (!bucket.gaps.some((g) => g.from === gap.from && g.date === gap.date) && bucket.gaps.length < 10) {
+                  bucket.gaps.push(gap);
+                }
+                if (!totals.gaps.some((g) => g.from === gap.from && g.date === gap.date) && totals.gaps.length < 10) {
+                  totals.gaps.push(gap);
+                }
+              }
+            }
+
+            if (row.direction === "IN") {
+              bucket.inflow += value;
+              totals.inflow += value;
+            } else if (row.direction === "OUT") {
+              bucket.outflow += value;
+              totals.outflow += value;
+              if (row.ordinary) {
+                bucket.ordinary += value;
+                totals.ordinary += value;
+              }
+            }
+            buckets.set(code, bucket);
+          }
+
+          for (const [code, bucket] of buckets) {
+            convertedByCurrency.set(code, {
+              currency: display,
+              inflow: moneyText(bucket.inflow),
+              outflow: moneyText(bucket.outflow),
+              ordinaryOutflow: moneyText(bucket.ordinary),
+              complete: bucket.missing === 0,
+              missingRows: bucket.missing,
+              gaps: bucket.gaps,
+            });
+          }
+
+          displayTotals = {
+            currency: display,
+            inflow: moneyText(totals.inflow),
+            outflow: moneyText(totals.outflow),
+            ordinaryOutflow: moneyText(totals.ordinary),
+            complete: totals.missing === 0,
+            missingRows: totals.missing,
+            gaps: totals.gaps,
+          };
+        }
+
         return {
           from: input.from,
           to: input.to,
-          currencies: totals.rows.map((total) => ({
-            currency: total.currency_code.trim(),
-            inflow: total.inflow,
-            outflow: total.outflow,
-            ordinaryOutflow: total.ordinary_outflow,
-            transactionCount: total.count,
-            events: total.events ?? [],
-            uses: total.uses ?? [],
-            transactionsWithoutEvent: total.without_event,
-            transactionsWithoutUse: total.without_use,
-          })),
+          displayCurrency: convertedByCurrency.size > 0 || displayTotals ? display : null,
+          ...(displayTotals ? { displayTotals } : {}),
+          currencies: totals.rows.map((total) => {
+            const code = total.currency_code.trim();
+            return {
+              currency: code,
+              inflow: total.inflow,
+              outflow: total.outflow,
+              ordinaryOutflow: total.ordinary_outflow,
+              transactionCount: total.count,
+              events: total.events ?? [],
+              uses: total.uses ?? [],
+              transactionsWithoutEvent: total.without_event,
+              transactionsWithoutUse: total.without_use,
+              ...(convertedByCurrency.has(code) ? { converted: convertedByCurrency.get(code) } : {}),
+            };
+          }),
         };
       });
     },
@@ -890,18 +1155,179 @@ export function createLedgerRead(databaseUrl: string): LedgerRead {
         const uncategorisedOutflow = Number(spendingCategories.none?.totalAmount ?? 0);
         const categorisedOutflow = Number((debitTotal - uncategorisedOutflow).toFixed(2));
 
+        const bookedTotals = {
+          credit: Number(totalsRows.rows[0]?.credit ?? 0).toFixed(2),
+          debit: debitTotal.toFixed(2),
+          categorisedOutflow: categorisedOutflow.toFixed(2),
+          uncategorisedOutflow: uncategorisedOutflow.toFixed(2),
+        };
+
+        /**
+         * Converted view.
+         *
+         * Booked totals above are untouched: a client that ignores `converted` sees
+         * exactly what it saw before. Each row converts at its own date, and a
+         * missing rate marks the month or slice rather than borrowing a neighbour's
+         * rate or substituting 1.0.
+         */
+        const display = (input.displayCurrency ?? "").trim().toUpperCase();
+        if (!/^[A-Z]{3}$/.test(display)) {
+          return {
+            uncategorised,
+            currency,
+            totals: bookedTotals,
+            monthlySummary,
+            spendingAnalysis: { categories: spendingCategories },
+          };
+        }
+
+        const conversionCurrency = (currency ?? display).trim().toUpperCase();
+        const rows = await client.query<{
+          transaction_date: Date | string | null;
+          amount: string;
+          currency_code: string | null;
+          direction: string;
+          category_code: string | null;
+          subcategory_code: string | null;
+        }>(
+          `SELECT cv.transaction_date,
+                  cv.amount::text AS amount,
+                  cv.currency_code,
+                  cv.direction,
+                  COALESCE(choice.category_code, resolved.category_code) AS category_code,
+                  COALESCE(choice.subcategory_code, resolved.subcategory_code) AS subcategory_code
+             FROM core.canonical_transaction_version cv
+             JOIN core.logical_transaction lt ON lt.logical_transaction_id = cv.logical_transaction_id
+             ${categoryLaterals}
+            WHERE cv.is_current
+              AND lt.identity_status = 'ACTIVE'
+              AND cv.duplicate_outcome <> 'EQUIVALENT_SUPERSEDED'
+              AND cv.amount IS NOT NULL
+              AND ($1::date IS NULL OR cv.transaction_date >= $1)
+              AND ($2::date IS NULL OR cv.transaction_date <= $2)
+              AND ($3::text IS NULL OR cv.currency_code = $3)`,
+          [input.from, input.to, currency],
+        );
+
+        type Slice = { credit: number; debit: number; missing: number; gaps: FxGap[] };
+        const monthSlices = new Map<string, Slice>();
+        const categorySlices = new Map<string, Slice>();
+        const converted = {
+          currency: display,
+          credit: 0,
+          debit: 0,
+          categorised: 0,
+          uncategorised: 0,
+          missing: 0,
+          gaps: [] as FxGap[],
+        };
+
+        const recordGap = (slice: Slice, gap: FxGap): void => {
+          if (!slice.gaps.some((existing) => existing.from === gap.from && existing.date === gap.date) && slice.gaps.length < 10) {
+            slice.gaps.push(gap);
+          }
+          if (!converted.gaps.some((existing) => existing.from === gap.from && existing.date === gap.date) && converted.gaps.length < 10) {
+            converted.gaps.push(gap);
+          }
+        };
+
+        for (const row of rows.rows) {
+          const amount = Number(row.amount);
+          if (!Number.isFinite(amount)) continue;
+          const date = row.transaction_date
+            ? (row.transaction_date instanceof Date
+              ? row.transaction_date.toISOString().slice(0, 10)
+              : String(row.transaction_date).slice(0, 10))
+            : null;
+          const result = await convertRows(fx, [{
+            amount,
+            currency: row.currency_code?.trim() || conversionCurrency,
+            date,
+          }], display);
+          const value = result.complete ? result.total : 0;
+
+          const month = date ? date.slice(0, 7) : "unknown";
+          const monthSlice = monthSlices.get(month) ?? { credit: 0, debit: 0, missing: 0, gaps: [] };
+          const categoryKey = row.direction === "OUT" ? (row.category_code ?? "none") : "";
+          const categorySlice = categoryKey ? (categorySlices.get(categoryKey) ?? { credit: 0, debit: 0, missing: 0, gaps: [] }) : null;
+
+          if (!result.complete) {
+            monthSlice.missing += result.missingRows;
+            converted.missing += result.missingRows;
+            if (categorySlice) categorySlice.missing += result.missingRows;
+            for (const gap of result.gaps) {
+              recordGap(monthSlice, gap);
+              if (categorySlice) recordGap(categorySlice, gap);
+            }
+          } else {
+            if (row.direction === "IN") {
+              converted.credit += value;
+              monthSlice.credit += value;
+            }
+            if (row.direction === "OUT") {
+              converted.debit += value;
+              monthSlice.debit += value;
+              if (categoryKey === "none") {
+                converted.uncategorised += value;
+              } else {
+                converted.categorised += value;
+              }
+              if (categorySlice) categorySlice.debit += value;
+            }
+          }
+
+          monthSlices.set(month, monthSlice);
+          if (categorySlice && categoryKey) categorySlices.set(categoryKey, categorySlice);
+        }
+
+        // The converted roll-up must reconcile the same way the booked one does:
+        // categorised + uncategorised = debit.
+        const convertedUncategorised = Number(converted.uncategorised.toFixed(2));
+        const convertedDebit = Number(converted.debit.toFixed(2));
+
+        const convertedMonths: Insights["monthlySummary"] = monthlySummary.map((month) => {
+          const slice = monthSlices.get(month.month);
+          if (!slice) return month;
+          return {
+            ...month,
+            converted: {
+              currency: display,
+              credit: moneyText(slice.credit),
+              debit: moneyText(slice.debit),
+              complete: slice.missing === 0,
+              missingRows: slice.missing,
+            },
+          };
+        });
+
         return {
           uncategorised,
           currency,
-          totals: {
-            credit: Number(totalsRows.rows[0]?.credit ?? 0).toFixed(2),
-            debit: debitTotal.toFixed(2),
-            categorisedOutflow: categorisedOutflow.toFixed(2),
-            uncategorisedOutflow: uncategorisedOutflow.toFixed(2),
+          displayCurrency: display,
+          totals: bookedTotals,
+          converted: {
+            currency: display,
+            credit: moneyText(converted.credit),
+            debit: moneyText(convertedDebit),
+            categorisedOutflow: moneyText(Number(converted.categorised.toFixed(2))),
+            uncategorisedOutflow: moneyText(convertedUncategorised),
+            complete: converted.missing === 0,
+            missingRows: converted.missing,
+            gaps: converted.gaps,
           },
-          monthlySummary,
+          monthlySummary: convertedMonths,
           spendingAnalysis: {
-            categories: spendingCategories,
+            categories: Object.fromEntries(
+              Object.entries(spendingCategories).map(([code, slice]) => {
+                const convertedSlice = categorySlices.get(code);
+                if (!convertedSlice) return [code, slice];
+                return [code, {
+                  ...slice,
+                  convertedAmount: moneyText(convertedSlice.debit),
+                  fxMissing: convertedSlice.missing > 0,
+                }];
+              }),
+            ),
           },
         };
       });

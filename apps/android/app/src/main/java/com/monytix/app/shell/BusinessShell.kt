@@ -99,6 +99,9 @@ fun BusinessShell(
         var mileOutcomeId by remember { mutableStateOf("") }
         var mileEventId by remember { mutableStateOf("") }
         var addStep by remember { mutableStateOf<AddStep?>(null) }
+        // Settings is not a tab: it is a full surface reached from the wordmark menu,
+        // so it lives beside `destination` rather than inside it.
+        var settingsOpen by rememberSaveable { mutableStateOf(false) }
         SystemBarContrast(dark = theme.isDark)
         val detail = destination == Destination.Live && page != LivePage.Home
         val creating = destination == Destination.Missions && missionPage == MissionPage.Create
@@ -142,19 +145,38 @@ fun BusinessShell(
                         onSomethingElse = { missionStack = listOf(MissionStep.SomethingElse) },
                     )
                 }
+            } else if (settingsOpen) {
+                Column(Modifier.fillMaxSize().statusBarsPadding()) {
+                    MoneySettings(
+                        api = api,
+                        token = token,
+                        store = store,
+                        onBack = { settingsOpen = false },
+                    )
+                }
             } else {
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
                         .statusBarsPadding(),
                 ) {
-                    LiveHeader(onSignOut = onSignOut, onMoly = {
-                        destination = Destination.Live
-                        page = LivePage.Moly
-                        resetMissions()
-                        resetDecisions()
-                        resetMile()
-                    })
+                    LiveHeader(
+                        onSignOut = onSignOut,
+                        onSettings = {
+                            settingsOpen = true
+                            page = LivePage.Home
+                            resetMissions()
+                            resetDecisions()
+                            resetMile()
+                        },
+                        onMoly = {
+                            destination = Destination.Live
+                            page = LivePage.Moly
+                            resetMissions()
+                            resetDecisions()
+                            resetMile()
+                        },
+                    )
                     Box(
                         modifier = Modifier
                             .weight(1f)
@@ -315,7 +337,7 @@ fun BusinessShell(
 }
 
 @Composable
-private fun LiveHeader(onSignOut: () -> Unit, onMoly: () -> Unit) {
+private fun LiveHeader(onSignOut: () -> Unit, onSettings: () -> Unit, onMoly: () -> Unit) {
     val theme = LocalPersonalTheme.current
     var menu by rememberSaveable { mutableStateOf(false) }
     Column(
@@ -328,6 +350,20 @@ private fun LiveHeader(onSignOut: () -> Unit, onMoly: () -> Unit) {
         Box {
             Wordmark(onClick = { menu = true })
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = "Money settings",
+                            fontFamily = theme.fontFamily,
+                            fontWeight = FontWeight.SemiBold,
+                            color = theme.palette.textPrimary,
+                        )
+                    },
+                    onClick = {
+                        menu = false
+                        onSettings()
+                    },
+                )
                 DropdownMenuItem(
                     text = {
                         Text(

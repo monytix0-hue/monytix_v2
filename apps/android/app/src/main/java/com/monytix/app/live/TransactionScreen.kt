@@ -20,9 +20,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -35,9 +38,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -45,6 +52,7 @@ import com.monytix.app.R
 import com.monytix.app.auth.MonytixApi
 import com.monytix.app.shell.UiSessionStore
 import com.monytix.app.theme.FigIcon
+import com.monytix.app.shell.Money
 import com.monytix.app.theme.LocalPersonalTheme
 import com.monytix.app.theme.PersonalRadius
 import com.monytix.app.theme.PersonalSpace
@@ -57,17 +65,110 @@ import org.json.JSONObject
 
 private data class LedgerTransaction(
     val id: String,
+    val versionId: String?,
     val amount: String?,
     val currency: String?,
     val direction: String?,
     val transactionDate: String?,
     val description: String?,
+    val categoryCode: String?,
     val categoryName: String?,
+    val subcategoryCode: String?,
     val subcategoryName: String?,
     val accountName: String?,
+    val weightCode: String?,
     val weightName: String?,
     val reference: String?,
+    /** The *as stated* pair when the alert named a foreign amount. Null means same as booked. */
+    val statedAmount: String? = null,
+    val statedCurrency: String? = null,
+    /** How the parser decided the booked currency, and how sure it was. */
+    val currencyBasis: String? = null,
+    val currencyConfidence: Double? = null,
+    /** True when the ledger should offer the "Currency uncertain — review" row. */
+    val currencyUncertain: Boolean = false,
 )
+
+/** Only the fields the user actually changed are sent back. */
+private data class TransactionCorrection(
+    val versionId: String?,
+    val amount: String? = null,
+    val direction: String? = null,
+    val occurredAt: String? = null,
+    val description: String? = null,
+    val categoryCode: String? = null,
+    val subcategoryCode: String? = null,
+    val weightCode: String? = null,
+) {
+    fun isEmpty(): Boolean =
+        amount == null && direction == null && occurredAt == null &&
+            description == null && categoryCode == null && subcategoryCode == null &&
+            weightCode == null
+}
+
+private data class TransactionDraft(
+    val amount: String,
+    val direction: String,
+    val date: String,
+    val description: String,
+    val categoryCode: String?,
+    val categoryName: String?,
+    val subcategoryCode: String?,
+    val subcategoryName: String?,
+    val weightCode: String?,
+    val weightName: String?,
+) {
+    companion object {
+        fun from(row: LedgerTransaction) = TransactionDraft(
+            amount = row.amount?.trim().orEmpty(),
+            direction = row.direction.orEmpty(),
+            date = row.transactionDate.orEmpty(),
+            description = row.description.orEmpty(),
+            categoryCode = row.categoryCode,
+            categoryName = row.categoryName,
+            subcategoryCode = row.subcategoryCode,
+            subcategoryName = row.subcategoryName,
+            weightCode = row.weightCode,
+            weightName = row.weightName,
+        )
+    }
+
+    /** The amount must stay a positive decimal, matching the ledger's own grammar. */
+    fun error(): String? {
+        val value = amount.trim()
+        if (value.isEmpty()) return "Enter an amount."
+        if (!Regex("""^(?:0|[1-9]\d*)(?:\.\d{1,4})?$""").matches(value)) return "Amount can have at most four decimals."
+        if ((value.toDoubleOrNull() ?: 0.0) <= 0.0) return "Amount must be more than zero."
+        if (direction != "IN" && direction != "OUT") return "Choose debit or credit."
+        // A missing date is left alone rather than forced, so an old row without
+        // one can still have its amount fixed.
+        if (date.isNotBlank() && !Regex("""^\d{4}-\d{2}-\d{2}$""").matches(date)) return "Choose a date."
+        if (description.isBlank()) return "Enter a description."
+        return null
+    }
+
+    fun corrections(row: LedgerTransaction): TransactionCorrection {
+        fun changed(next: String?, current: String?): String? =
+            if ((next ?: "").trim() == (current ?: "").trim()) null else next?.trim()?.ifBlank { null }
+
+        val nextCategory = changed(categoryCode, row.categoryCode)
+        val nextSubcategory = changed(subcategoryCode, row.subcategoryCode)
+        val occurredAt = if (date == row.transactionDate.orEmpty()) null else "${date}T00:00:00Z"
+        return TransactionCorrection(
+            versionId = row.versionId,
+            amount = changed(amount, row.amount),
+            direction = changed(direction, row.direction),
+            occurredAt = occurredAt,
+            description = changed(description, row.description),
+            // The API refuses a subcategory without its category, so a subcategory
+            // move always carries the category even when that part is unchanged.
+            categoryCode = if (nextSubcategory != null) categoryCode?.trim()?.ifBlank { null } else nextCategory,
+            subcategoryCode = nextSubcategory,
+            weightCode = changed(weightCode, row.weightCode),
+        )
+    }
+}
+
 
 private data class FilterChoice(val code: String, val name: String)
 
@@ -87,6 +188,7 @@ fun TransactionScreen(
     var items by remember { mutableStateOf(listOf<LedgerTransaction>()) }
     var nextCursor by remember { mutableStateOf<String?>(null) }
     var categories by remember { mutableStateOf(listOf<CategoryChoice>()) }
+    var weights by remember { mutableStateOf(listOf<FilterChoice>()) }
     var direction by remember { mutableStateOf<String?>(null) }
     var category by remember { mutableStateOf<String?>(null) }
     var subcategory by remember { mutableStateOf<String?>(null) }
@@ -108,7 +210,9 @@ fun TransactionScreen(
     val credit = if (theme.isDark) PersonalTokens.status.mint else theme.palette.accent
 
     LaunchedEffect(Unit) {
-        categories = parseFilters(api.getJson("/v1/transaction-filters", token))
+        val filters = parseFilters(api.getJson("/v1/transaction-filters", token))
+        categories = filters.categories
+        weights = filters.weights
     }
     LaunchedEffect(insightQuery) {
         val json = store?.ledgerInsights(from, to) ?: api.getJson(insightsPath(from, to), token)
@@ -129,6 +233,24 @@ fun TransactionScreen(
         nextCursor = page.nextCursor
         known = page.known
         loading = false
+    }
+
+    // A correction or a delete changes this page and the analytics behind the
+    // insights cards, so both are reread from the server rather than patched locally.
+    val refreshAfterWrite: suspend () -> Unit = {
+        val filters = parseFilters(api.getJson("/v1/transaction-filters", token))
+        categories = filters.categories
+        weights = filters.weights
+        val page = loadPage(api, token, direction, from, to, category, subcategory, null)
+        items = page.items
+        nextCursor = page.nextCursor
+        known = page.known
+        store?.invalidateInsights()
+        val refreshed = store?.ledgerInsights(from, to) ?: api.getJson(insightsPath(from, to), token)
+        LedgerInsights.parse(refreshed)?.let {
+            insights = it
+            insightsKnown = true
+        }
     }
 
     Box(
@@ -196,8 +318,17 @@ fun TransactionScreen(
                 }
             }
             if (showInsights && insightsKnown) {
-                MonthSummaryCarousel(insights.months, insights.currency)
-                SpendingChartCard(insights) {
+                MonthSummaryCarousel(
+                    insights.months,
+                    insights.currency,
+                    locale = store?.preferences?.moneyLocale ?: Locale.getDefault(),
+                    minorUnits = store?.minorUnits(insights.currency),
+                )
+                SpendingChartCard(
+                    insights,
+                    locale = store?.preferences?.moneyLocale ?: Locale.getDefault(),
+                    minorUnits = store?.minorUnits(insights.currency),
+                ) {
                     direction = null
                     category = "none"
                     subcategory = null
@@ -297,16 +428,44 @@ fun TransactionScreen(
                                     if (!row.weightName.isNullOrBlank()) {
                                         Text(row.weightName, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
                                     }
+                                    // A second, independent prompt: the category row above answers
+                                    // "how is this grouped", this one answers "is the figure right".
+                                    if (row.currencyUncertain) {
+                                        Text(
+                                            if (row.currency.isNullOrBlank()) {
+                                                "Currency uncertain — review"
+                                            } else {
+                                                "Currency uncertain (${row.currency}) — review"
+                                            },
+                                            color = theme.palette.accent,
+                                            fontFamily = theme.fontFamily,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 13.sp,
+                                        )
+                                    }
                                 }
                                 Spacer(Modifier.width(PersonalSpace.s8))
-                                Text(
-                                    statementMoney(row.currency, row.amount),
-                                    color = if (row.direction == "IN") credit else theme.palette.textPrimary,
-                                    fontFamily = theme.fontFamily,
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 15.sp,
-                                    textAlign = TextAlign.End,
-                                )
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text(
+                                        statementMoney(row.currency, row.amount, store),
+                                        color = if (row.direction == "IN") credit else theme.palette.textPrimary,
+                                        fontFamily = theme.fontFamily,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 15.sp,
+                                        textAlign = TextAlign.End,
+                                    )
+                                    // The stated side only appears when it differs from the booked
+                                    // side, so an ordinary domestic alert stays one line.
+                                    if (!row.statedCurrency.isNullOrBlank() && !row.statedAmount.isNullOrBlank()) {
+                                        Text(
+                                            statementMoney(row.statedCurrency, row.statedAmount, store),
+                                            color = theme.palette.textSecondary,
+                                            fontFamily = theme.fontFamily,
+                                            fontSize = 12.sp,
+                                            textAlign = TextAlign.End,
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -353,26 +512,22 @@ fun TransactionScreen(
                 row,
                 credit,
                 categories,
+                weights,
+                store = store,
                 onBack = { selected = null },
-                onSave = { categoryCode, subcategoryCode ->
-                    val ok = saveCategory(api, token, row.id, categoryCode, subcategoryCode)
+                onSave = { correction ->
+                    val ok = saveTransaction(api, token, row.id, correction)
                     if (ok) {
-                        val page = loadPage(api, token, direction, from, to, category, subcategory, null)
-                        items = page.items
-                        nextCursor = page.nextCursor
-                        known = page.known
-                        store?.invalidateInsights()
-                        val refreshed = store?.ledgerInsights(from, to) ?: api.getJson(insightsPath(from, to), token)
-                        LedgerInsights.parse(refreshed)?.let {
-                            insights = it
-                            insightsKnown = true
-                        }
-                        val chosen = categories.firstOrNull { it.code == categoryCode }
-                        val fresh = page.items.firstOrNull { it.id == row.id }
-                        selected = fresh ?: row.copy(
-                            categoryName = chosen?.name,
-                            subcategoryName = chosen?.subcategories?.firstOrNull { it.code == subcategoryCode }?.name,
-                        )
+                        refreshAfterWrite()
+                        selected = null
+                    }
+                    ok
+                },
+                onDelete = {
+                    val ok = deleteTransaction(api, token, row.id)
+                    if (ok) {
+                        refreshAfterWrite()
+                        selected = null
                     }
                     ok
                 },
@@ -440,14 +595,44 @@ private fun TransactionDetail(
     row: LedgerTransaction,
     credit: androidx.compose.ui.graphics.Color,
     categories: List<CategoryChoice>,
+    weights: List<FilterChoice>,
+    store: UiSessionStore? = null,
     onBack: () -> Unit,
-    onSave: suspend (String, String?) -> Boolean,
+    onSave: suspend (TransactionCorrection) -> Boolean,
+    onDelete: suspend () -> Boolean,
 ) {
     val theme = LocalPersonalTheme.current
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var picking by remember { mutableStateOf(false) }
+    var draft by remember(row.id) { mutableStateOf(TransactionDraft.from(row)) }
+    var pickingCategory by remember { mutableStateOf(false) }
+    var pickingWeight by remember { mutableStateOf(false) }
     var chosen by remember { mutableStateOf<CategoryChoice?>(null) }
     var saving by remember { mutableStateOf(false) }
+    var confirmingDelete by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val dirty = draft != TransactionDraft.from(row)
+
+    fun save() {
+        val problem = draft.error()
+        if (problem != null) {
+            error = problem
+            return
+        }
+        val correction = draft.corrections(row)
+        if (correction.isEmpty()) {
+            onBack()
+            return
+        }
+        scope.launch {
+            saving = true
+            error = null
+            val ok = onSave(correction)
+            saving = false
+            if (ok) onBack() else error = "The change could not be saved."
+        }
+    }
+
     Box(Modifier.fillMaxSize()) {
     Column(
         Modifier
@@ -459,14 +644,14 @@ private fun TransactionDetail(
             .padding(top = PersonalSpace.s16, bottom = PersonalSpace.s32),
         verticalArrangement = Arrangement.spacedBy(PersonalSpace.s20),
     ) {
-        LedgerBackBar("Transaction", "Recorded activity", onBack)
+        LedgerBackBar(if (dirty) "Edit transaction" else "Transaction", "Recorded activity", onBack)
         LedgerCard {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                FigIcon(mark(row.direction), 28.dp)
+                FigIcon(mark(draft.direction), 28.dp)
                 Spacer(Modifier.width(PersonalSpace.s12))
                 Text(
-                    statementMoney(row.currency, row.amount),
-                    color = if (row.direction == "IN") credit else theme.palette.textPrimary,
+                    statementMoney(row.currency, draft.amount, store),
+                    color = if (draft.direction == "IN") credit else theme.palette.textPrimary,
                     fontFamily = theme.fontFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 28.sp,
@@ -481,50 +666,299 @@ private fun TransactionDetail(
                 .background(theme.palette.surface)
                 .border(1.dp, theme.palette.border, RoundedCornerShape(PersonalRadius.card)),
         ) {
-            Fact("Date", headingDate(row.transactionDate ?: ""))
-            Fact("Type", if (row.direction == "IN") "Credit" else if (row.direction == "OUT") "Debit" else "Not recorded")
-            Fact("Category", recorded(row.categoryName), enabled = categories.isNotEmpty() && !saving) {
-                chosen = null
-                picking = true
+            EditRow("Amount", enabled = !saving) {
+                EditField(
+                    value = draft.amount,
+                    placeholder = "0.00",
+                    keyboard = KeyboardType.Decimal,
+                    onValueChange = { draft = draft.copy(amount = it) },
+                )
             }
-            Fact("Subcategory", recorded(row.subcategoryName))
+            EditToggle("Type", enabled = !saving) {
+                Row(horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s8)) {
+                    LedgerChip("Debit", draft.direction == "OUT") { draft = draft.copy(direction = "OUT") }
+                    LedgerChip("Credit", draft.direction == "IN") { draft = draft.copy(direction = "IN") }
+                }
+            }
+            EditRow("Date", enabled = !saving) {
+                LedgerChip(headingDate(draft.date), false) {
+                    val initial = runCatching { LocalDate.parse(draft.date) }.getOrNull() ?: LocalDate.now()
+                    pickDate(context, initial) { draft = draft.copy(date = it.toString()) }
+                }
+            }
+            EditRow("Description", enabled = !saving) {
+                EditField(
+                    value = draft.description,
+                    placeholder = "What was this?",
+                    onValueChange = { draft = draft.copy(description = it) },
+                )
+            }
+            EditRow("Category", enabled = categories.isNotEmpty() && !saving) {
+                LedgerChip(recorded(draft.categoryName), false) {
+                    chosen = null
+                    pickingCategory = true
+                }
+            }
+            EditRow("Subcategory", enabled = !saving) {
+                Text(
+                    recorded(draft.subcategoryName),
+                    color = theme.palette.textSecondary,
+                    fontFamily = theme.fontFamily,
+                    fontSize = 15.sp,
+                )
+            }
+            EditRow("Weight", enabled = weights.isNotEmpty() && !saving) {
+                LedgerChip(recorded(draft.weightName), false) { pickingWeight = true }
+            }
             Fact("Account", recorded(row.accountName))
-            if (!row.weightName.isNullOrBlank()) {
-                Fact("Weight", row.weightName)
-            }
             Fact("Reference", recorded(row.reference))
         }
+        if (error != null) {
+            Text(
+                error.orEmpty(),
+                color = theme.status.coralBorder,
+                fontFamily = theme.fontFamily,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 14.sp,
+            )
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(PersonalSpace.s12)) {
+            Text(
+                if (saving) "Saving" else "Save changes",
+                color = theme.action.label,
+                fontFamily = theme.fontFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 16.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(PersonalRadius.action))
+                    .background(if (saving || !dirty) theme.action.disabledFill else theme.action.default)
+                    .clickable(enabled = !saving && dirty) { save() }
+                    .padding(vertical = PersonalSpace.s16),
+            )
+            Text(
+                "Delete transaction",
+                color = theme.status.coralBorder,
+                fontFamily = theme.fontFamily,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 15.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(PersonalRadius.action))
+                    .clickable(enabled = !saving) { confirmingDelete = true }
+                    .padding(vertical = PersonalSpace.s12),
+            )
+        }
     }
-    if (picking) {
+    if (pickingCategory) {
         CategorySheet(
             categories = categories,
             chosen = chosen,
             onChooseCategory = { category ->
                 if (category.subcategories.isEmpty()) {
-                    scope.launch {
-                        saving = true
-                        val ok = onSave(category.code, null)
-                        saving = false
-                        if (ok) picking = false
-                    }
+                    draft = draft.copy(
+                        categoryCode = category.code,
+                        categoryName = category.name,
+                        subcategoryCode = null,
+                        subcategoryName = null,
+                    )
+                    pickingCategory = false
                 } else {
                     chosen = category
                 }
             },
             onChooseSubcategory = { category, sub ->
-                scope.launch {
-                    saving = true
-                    val ok = onSave(category.code, sub.code)
-                    saving = false
-                    if (ok) picking = false
-                }
+                draft = draft.copy(
+                    categoryCode = category.code,
+                    categoryName = category.name,
+                    subcategoryCode = sub.code.takeUnless { it == "none" },
+                    subcategoryName = sub.name.takeUnless { it == "Not recorded" },
+                )
+                pickingCategory = false
             },
             onBack = { chosen = null },
-            onDismiss = { picking = false },
+            onDismiss = { pickingCategory = false },
+        )
+    }
+    if (pickingWeight) {
+        ChoiceSheet(
+            title = "Weight",
+            choices = weights,
+            onChoose = { choice ->
+                draft = draft.copy(weightCode = choice.code, weightName = choice.name)
+                pickingWeight = false
+            },
+            onDismiss = { pickingWeight = false },
+        )
+    }
+    if (confirmingDelete) {
+        DeleteDialog(
+            description = row.description.orEmpty(),
+            onDismiss = { confirmingDelete = false },
+            onConfirm = {
+                scope.launch {
+                    saving = true
+                    val ok = onDelete()
+                    saving = false
+                    confirmingDelete = false
+                    if (ok) onBack() else error = "The transaction could not be deleted."
+                }
+            },
         )
     }
     }
 }
+
+@Composable
+private fun EditRow(label: String, enabled: Boolean = true, content: @Composable () -> Unit) {
+    val theme = LocalPersonalTheme.current
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = PersonalSpace.s16, vertical = PersonalSpace.s12),
+        verticalArrangement = Arrangement.spacedBy(PersonalSpace.s6),
+    ) {
+        Text(label, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+        Box(Modifier.alpha(if (enabled) 1f else 0.55f)) {
+            content()
+            if (!enabled) {
+                // Swallow taps so a disabled row cannot open its sheet.
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = {},
+                        ),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun EditToggle(label: String, enabled: Boolean = true, content: @Composable () -> Unit) {
+    EditRow(label, enabled) { content() }
+}
+
+@Composable
+private fun EditField(
+    value: String,
+    placeholder: String,
+    keyboard: KeyboardType = KeyboardType.Text,
+    onValueChange: (String) -> Unit,
+) {
+    val theme = LocalPersonalTheme.current
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        singleLine = false,
+        textStyle = TextStyle(
+            color = theme.palette.textPrimary,
+            fontFamily = theme.fontFamily,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 15.sp,
+        ),
+        keyboardOptions = KeyboardOptions(keyboardType = keyboard),
+        cursorBrush = SolidColor(theme.palette.accent),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(PersonalRadius.action))
+            .background(theme.palette.surfaceRaised)
+            .border(1.dp, theme.palette.border, RoundedCornerShape(PersonalRadius.action))
+            .padding(horizontal = PersonalSpace.s12, vertical = PersonalSpace.s12),
+        decorationBox = { inner ->
+            if (value.isEmpty()) {
+                Text(placeholder, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 15.sp)
+            }
+            inner()
+        },
+    )
+}
+
+@Composable
+private fun ChoiceSheet(
+    title: String,
+    choices: List<FilterChoice>,
+    onChoose: (FilterChoice) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val theme = LocalPersonalTheme.current
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(theme.palette.backdrop.copy(alpha = 0.72f))
+            .clickable(onClick = onDismiss),
+    ) {
+        Column(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(topStart = PersonalRadius.sheet, topEnd = PersonalRadius.sheet))
+                .background(theme.palette.sheet)
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
+                .navigationBarsPadding()
+                .verticalScroll(rememberScrollState())
+                .padding(PersonalSpace.s20),
+            verticalArrangement = Arrangement.spacedBy(PersonalSpace.s8),
+        ) {
+            Text(title, color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            for (choice in choices) {
+                LedgerChip(choice.name, false) { onChoose(choice) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DeleteDialog(description: String, onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    val theme = LocalPersonalTheme.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text("Delete this transaction?", color = theme.palette.textPrimary, fontFamily = theme.fontFamily, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        },
+        text = {
+            Text(
+                "${description.ifBlank { "This transaction" }} will be removed for good. Its totals leave every summary and insight.",
+                color = theme.palette.textSecondary,
+                fontFamily = theme.fontFamily,
+                fontSize = 15.sp,
+            )
+        },
+        confirmButton = {
+            Text(
+                "Delete",
+                color = theme.status.coralBorder,
+                fontFamily = theme.fontFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 15.sp,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(PersonalRadius.pill))
+                    .clickable(onClick = onConfirm)
+                    .padding(horizontal = PersonalSpace.s16, vertical = PersonalSpace.s8),
+            )
+        },
+        dismissButton = {
+            Text(
+                "Keep",
+                color = theme.palette.textPrimary,
+                fontFamily = theme.fontFamily,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 15.sp,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(PersonalRadius.pill))
+                    .clickable(onClick = onDismiss)
+                    .padding(horizontal = PersonalSpace.s16, vertical = PersonalSpace.s8),
+            )
+        },
+        containerColor = theme.palette.surface,
+    )
+}
+
 
 @Composable
 private fun CategorySheet(
@@ -682,15 +1116,15 @@ private fun headingDate(iso: String): String {
     return runCatching { LocalDate.parse(iso).format(headingDateFormat) }.getOrDefault(iso)
 }
 
-private fun statementMoney(currency: String?, amount: String?): String {
-    val code = currency?.trim().orEmpty()
-    val value = amount?.replace(",", "")?.toDoubleOrNull() ?: return "Not recorded"
-    val number = java.text.NumberFormat.getNumberInstance(Locale.getDefault()).apply {
-        minimumFractionDigits = 2
-        maximumFractionDigits = 2
-    }
-    val text = number.format(value)
-    return if (code.isEmpty()) text else "$code $text"
+/** A booked amount in its own currency, never in an assumed one. */
+private fun statementMoney(currency: String?, amount: String?, store: UiSessionStore? = null): String {
+    val code = store?.displayCurrency(currency) ?: Money.currency(currency)
+    return Money.format(
+        raw = amount,
+        currency = code,
+        locale = store?.preferences?.moneyLocale ?: Locale.getDefault(),
+        minorUnits = store?.minorUnits(code),
+    )
 }
 
 private fun pickDate(context: android.content.Context, initial: LocalDate, onPicked: (LocalDate) -> Unit) {
@@ -703,16 +1137,32 @@ private fun pickDate(context: android.content.Context, initial: LocalDate, onPic
     ).show()
 }
 
-private suspend fun saveCategory(
+private suspend fun saveTransaction(
     api: MonytixApi,
     token: suspend (Boolean) -> String?,
     id: String,
-    categoryCode: String,
-    subcategoryCode: String?,
+    correction: TransactionCorrection,
 ): Boolean {
-    val subcategory = if (subcategoryCode == null) "" else ""","subcategory_id":"$subcategoryCode""""
-    val body = """{"category_id":"$categoryCode"$subcategory,"apply_to_past":false,"match_scope":"EXACT_MERCHANT"}"""
-    val result = api.submit("PATCH", "/v1/transactions/$id/category", body, java.util.UUID.randomUUID().toString(), token)
+    val body = JSONObject().apply {
+        correction.versionId?.let { put("expected_version_id", it) }
+        correction.amount?.let { put("amount", it) }
+        correction.direction?.let { put("direction", it) }
+        correction.occurredAt?.let { put("occurred_at", it) }
+        correction.description?.let { put("description", it) }
+        correction.categoryCode?.let { put("category_id", it) }
+        correction.subcategoryCode?.let { put("subcategory_id", it) }
+        correction.weightCode?.let { put("weight_code", it) }
+    }.toString()
+    val result = api.submit("PATCH", "/v1/transactions/$id", body, java.util.UUID.randomUUID().toString(), token)
+    return result.status in 200..299
+}
+
+private suspend fun deleteTransaction(
+    api: MonytixApi,
+    token: suspend (Boolean) -> String?,
+    id: String,
+): Boolean {
+    val result = api.submit("DELETE", "/v1/transactions/$id", null, java.util.UUID.randomUUID().toString(), token)
     return result.status in 200..299
 }
 
@@ -760,16 +1210,29 @@ private fun parsePage(json: String): LedgerPage {
                 add(
                     LedgerTransaction(
                         id = id,
+                        versionId = row.optionalText("canonicalTransactionVersionId"),
                         amount = row.optionalText("amount"),
                         currency = row.optionalText("currency"),
                         direction = row.optionalText("direction"),
                         transactionDate = row.optionalText("transactionDate"),
                         description = row.optionalText("description"),
+                        categoryCode = row.optionalText("categoryCode"),
                         categoryName = row.optionalText("categoryName"),
+                        subcategoryCode = row.optionalText("subcategoryCode"),
                         subcategoryName = row.optionalText("subcategoryName"),
                         accountName = row.optionalText("accountName"),
+                        weightCode = row.optionalText("weightCode"),
                         weightName = row.optionalText("weightName"),
                         reference = row.optionalText("reference"),
+                        statedAmount = row.optJSONObject("stated")?.optionalText("amount"),
+                        statedCurrency = row.optJSONObject("stated")?.optionalText("currency"),
+                        currencyBasis = row.optionalText("currencyBasis"),
+                        currencyConfidence = if (row.has("currencyConfidence") && !row.isNull("currencyConfidence")) {
+                            row.optDouble("currencyConfidence")
+                        } else {
+                            null
+                        },
+                        currencyUncertain = row.optBoolean("currencyUncertain", false),
                     ),
                 )
             }
@@ -779,25 +1242,41 @@ private fun parsePage(json: String): LedgerPage {
     return LedgerPage(items, cursor, true)
 }
 
-private fun parseFilters(json: String?): List<CategoryChoice> {
-    if (json.isNullOrBlank()) return emptyList()
-    val rows = JSONObject(json).optJSONArray("categories") ?: return emptyList()
-    return buildList {
-        for (index in 0 until rows.length()) {
-            val row = rows.optJSONObject(index) ?: continue
-            val code = row.optString("code")
-            if (code.isBlank()) continue
-            val subs = row.optJSONArray("subcategories")
-            val subcategories = buildList {
-                if (subs != null) {
-                    for (subIndex in 0 until subs.length()) {
-                        val sub = subs.optJSONObject(subIndex) ?: continue
-                        val subCode = sub.optString("code")
-                        if (subCode.isNotBlank()) add(FilterChoice(subCode, sub.optString("name").ifBlank { subCode }))
+private data class LedgerFilters(val categories: List<CategoryChoice>, val weights: List<FilterChoice>)
+
+private fun parseFilters(json: String?): LedgerFilters {
+    if (json.isNullOrBlank()) return LedgerFilters(emptyList(), emptyList())
+    val root = runCatching { JSONObject(json) }.getOrNull() ?: return LedgerFilters(emptyList(), emptyList())
+    val rows = root.optJSONArray("categories")
+    val categories = buildList {
+        if (rows != null) {
+            for (index in 0 until rows.length()) {
+                val row = rows.optJSONObject(index) ?: continue
+                val code = row.optString("code")
+                if (code.isBlank()) continue
+                val subs = row.optJSONArray("subcategories")
+                val subcategories = buildList {
+                    if (subs != null) {
+                        for (subIndex in 0 until subs.length()) {
+                            val sub = subs.optJSONObject(subIndex) ?: continue
+                            val subCode = sub.optString("code")
+                            if (subCode.isNotBlank()) add(FilterChoice(subCode, sub.optString("name").ifBlank { subCode }))
+                        }
                     }
                 }
+                add(CategoryChoice(code, row.optString("name").ifBlank { code }, subcategories))
             }
-            add(CategoryChoice(code, row.optString("name").ifBlank { code }, subcategories))
         }
     }
+    val weightRows = root.optJSONArray("weights")
+    val weights = buildList {
+        if (weightRows != null) {
+            for (index in 0 until weightRows.length()) {
+                val row = weightRows.optJSONObject(index) ?: continue
+                val code = row.optString("code")
+                if (code.isNotBlank()) add(FilterChoice(code, row.optString("name").ifBlank { code }))
+            }
+        }
+    }
+    return LedgerFilters(categories, weights)
 }

@@ -166,39 +166,37 @@ enum InsightFormat {
         return monthFormatter.string(from: date)
     }
 
-    static func money(_ value: Double, currency: String?) -> String {
-        let number = NumberFormatter()
-        number.numberStyle = .decimal
-        number.minimumFractionDigits = 2
-        number.maximumFractionDigits = 2
-        number.locale = .current
-        let text = number.string(from: NSNumber(value: abs(value))) ?? String(format: "%.2f", abs(value))
-        guard let currency, !currency.isEmpty else { return text }
-        return "\(currency) \(text)"
+    /// A booked figure in the report's own currency.
+    ///
+    /// `currency` here is the insights payload's `currency`: the booked currency the
+    /// slices are actually in. It is never the display currency, because a pie chart
+    /// that silently mixes two currencies cannot reconcile. `locale` is the owner's,
+    /// so `en_IN` still groups by lakh without the app slicing digits itself.
+    static func money(
+        _ value: Double,
+        currency: String?,
+        locale: Locale = .current,
+        minorUnits: Int? = nil
+    ) -> String {
+        Money.format(
+            Decimal(abs(value)),
+            currency: currency,
+            locale: locale,
+            minorUnits: minorUnits
+        )
     }
 
-    static func compact(_ value: Double, currency: String?) -> String {
-        let number = NumberFormatter()
-        number.numberStyle = .decimal
-        number.maximumFractionDigits = 1
-        number.locale = .current
-        let symbol: String
-        let scaled: Double
-        switch abs(value) {
-        case 10_000_000...:
-            symbol = "Cr"
-            scaled = value / 10_000_000
-        case 100_000...:
-            symbol = "L"
-            scaled = value / 100_000
-        case 1_000...:
-            symbol = "k"
-            scaled = value / 1_000
-        default:
-            return money(value, currency: currency)
-        }
-        let text = number.string(from: NSNumber(value: scaled)) ?? String(format: "%.1f", scaled)
-        return currency.map { "\($0) \(text)\(symbol)" } ?? "\(text)\(symbol)"
+    /// A compact figure for a card heading: `₹1.8L`, `$14.2k`.
+    ///
+    /// The scale word follows the currency's own grouping. Rupees group by lakh, so
+    /// `L`/`Cr` is right for INR and wrong for USD, which is why `Money.compact`
+    /// decides from the code rather than from the locale.
+    static func compact(
+        _ value: Double,
+        currency: String?,
+        locale: Locale = .current
+    ) -> String {
+        Money.compact(Decimal(value), currency: currency, locale: locale)
     }
 
     static func percent(_ value: Double, of total: Double) -> String {
@@ -227,6 +225,10 @@ enum InsightFormat {
 struct MonthSummaryCarousel: View {
     var months: [InsightMonth]
     var currency: String?
+    /// The owner's locale, so grouping follows the device rather than a constant.
+    var locale: Locale = .current
+    /// From `ref.currency`, when the bootstrap shipped it. Nil means the platform default.
+    var minorUnits: Int? = nil
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.personalTheme) private var theme
 
@@ -313,7 +315,7 @@ struct MonthSummaryCarousel: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label)
                 .personalText(.secondary, size: 12)
-            Text(InsightFormat.compact(value, currency: currency))
+            Text(InsightFormat.compact(value, currency: currency, locale: locale))
                 .font(.custom("Inter-SemiBold", size: 15))
                 .foregroundStyle(toneColor(tone))
                 .lineLimit(1)
@@ -343,7 +345,7 @@ struct MonthSummaryCarousel: View {
     private func balanceLabel(_ month: InsightMonth) -> String {
         let delta = month.closing - month.opening
         let sign = delta < 0 ? "−" : "+"
-        return "Net \(sign)\(InsightFormat.money(delta, currency: currency))"
+        return "Net \(sign)\(InsightFormat.money(delta, currency: currency, locale: locale, minorUnits: minorUnits))"
     }
 }
 
@@ -351,6 +353,10 @@ struct MonthSummaryCarousel: View {
 
 struct SpendingChartCard: View {
     var insights: LedgerInsights
+    /// The owner's locale and the report currency's minor units, threaded so every
+    /// figure on the card agrees with the ledger rows behind it.
+    var locale: Locale = .current
+    var minorUnits: Int? = nil
     var onReviewUncategorised: () -> Void
 
     @Environment(\.colorScheme) private var colorScheme
@@ -393,8 +399,8 @@ struct SpendingChartCard: View {
         if insights.totals.debit > 0, drilled == nil {
             Text(
                 insights.reconciles
-                    ? "Slices match the \(InsightFormat.money(insights.totals.debit, currency: insights.currency)) recorded outflow."
-                    : "Slices cover \(InsightFormat.money(insights.spendingTotal, currency: insights.currency)) of \(InsightFormat.money(insights.totals.debit, currency: insights.currency)) recorded outflow."
+                    ? "Slices match the \(InsightFormat.money(insights.totals.debit, currency: insights.currency, locale: locale, minorUnits: minorUnits)) recorded outflow."
+                    : "Slices cover \(InsightFormat.money(insights.spendingTotal, currency: insights.currency, locale: locale, minorUnits: minorUnits)) of \(InsightFormat.money(insights.totals.debit, currency: insights.currency, locale: locale, minorUnits: minorUnits)) recorded outflow."
             )
             .personalText(.secondary, size: 12)
             .fixedSize(horizontal: false, vertical: true)
@@ -487,7 +493,7 @@ struct SpendingChartCard: View {
         .frame(height: 200)
         .overlay {
             VStack(spacing: 2) {
-                Text(InsightFormat.compact(total, currency: insights.currency))
+                Text(InsightFormat.compact(total, currency: insights.currency, locale: locale))
                     .font(.custom("Inter-Bold", size: 20))
                     .foregroundStyle(palette.textPrimary)
                 Text(drilled.map { $0.name } ?? "Total outflow")
@@ -522,7 +528,7 @@ struct SpendingChartCard: View {
                             .personalText(.primary, size: 14)
                             .lineLimit(1)
                         Spacer(minLength: PersonalSpace.s8)
-                        Text(InsightFormat.money(pair.element.amount, currency: insights.currency))
+                        Text(InsightFormat.money(pair.element.amount, currency: insights.currency, locale: locale, minorUnits: minorUnits))
                             .font(.custom("Inter-SemiBold", size: 13))
                             .foregroundStyle(palette.textPrimary)
                         Text(percentText(pair.element.amount))

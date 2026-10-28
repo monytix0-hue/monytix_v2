@@ -35,3 +35,4 @@ celerybeat-schedule*
 backend-monytix/intelligence/celerybeat-schedule*
 website/tsconfig.tsbuildinfo
 scripts/*-e2e-result.json
+services/api/uncategorised-transactions.json

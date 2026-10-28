@@ -5,8 +5,15 @@ enum BusinessDestination: String, CaseIterable, Identifiable {
     case decisions = "Decisions"
     case missions = "Missions"
     case mile = "M.I.L.E."
+    /// Not a tab: reached from the wordmark menu. Kept in this enum so the shell has
+    /// one place that knows every full-screen surface, but excluded from `tabs` so the
+    /// four-item pill keeps its layout.
+    case settings = "Settings"
 
     var id: String { rawValue }
+
+    /// The destinations the bottom pill shows, in order.
+    static let tabs: [BusinessDestination] = [.live, .decisions, .missions, .mile]
 
     fileprivate var glyph: NavGlyph {
         switch self {
@@ -16,6 +23,8 @@ enum BusinessDestination: String, CaseIterable, Identifiable {
             .decisions
         case .missions:
             .missions
+        case .settings:
+            .pulse
         }
     }
 }
@@ -140,6 +149,16 @@ private struct Chrome: View {
                                 onReport: { mileStack = [.report] },
                                 onLifetime: { mileStack = [.lifetime] }
                             )
+                        } else if destination == .settings {
+                            CurrencySettingsView(
+                                api: api,
+                                token: { force in await session.idToken(forceRefresh: force) },
+                                store: store,
+                                onBack: {
+                                    destination = .live
+                                    page = .home
+                                }
+                            )
                         } else {
                             Text(destination.rawValue)
                                 .personalText(.primary, size: 25, weight: .extraBold)
@@ -148,9 +167,13 @@ private struct Chrome: View {
                         }
                     }
                 }
-                pill
-                    .padding(.horizontal, PersonalSpace.s28)
-                    .padding(.bottom, PersonalSpace.s8)
+                // Settings is a full surface with its own back control, not a tab, so
+                // the pill would be a second way out of a screen that is already scoped.
+                if destination != .settings {
+                    pill
+                        .padding(.horizontal, PersonalSpace.s28)
+                        .padding(.bottom, PersonalSpace.s8)
+                }
             }
             }
             .overlay(alignment: .bottomTrailing) {
@@ -251,6 +274,15 @@ private struct Chrome: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: PersonalSpace.s20) {
             Menu {
+                Button {
+                    destination = .settings
+                    page = .home
+                    resetMissions()
+                    resetDecisions()
+                    resetMile()
+                } label: {
+                    Label("Money settings", systemImage: "banknote")
+                }
                 Button("Sign out", role: .destructive, action: onSignOut)
             } label: {
                 wordmark
@@ -296,7 +328,7 @@ private struct Chrome: View {
 
     private var pill: some View {
         HStack(spacing: 0) {
-            ForEach(BusinessDestination.allCases) { item in
+            ForEach(BusinessDestination.tabs) { item in
                 let selected = destination == item
                 Button {
                     destination = item

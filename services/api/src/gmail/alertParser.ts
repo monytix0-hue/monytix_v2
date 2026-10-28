@@ -1,11 +1,25 @@
 import { createHash } from "node:crypto";
+import {
+  detectCurrency,
+  needsReview,
+  readMoney,
+  type CurrencyBasis,
+} from "../money/detect.js";
+import { resolveLocalePack, type LocalePack } from "./locales/index.js";
 
 export type SpotChannel = "UPI" | "IMPS" | "NEFT" | "RTGS" | "ATM" | "CARD" | "OTHER";
 
 export type SpotAlert = {
   flow: "DEBIT" | "CREDIT";
+  /** The booked amount: what left or entered the account. */
   amount: string;
-  currency: "INR";
+  /** The booked currency. Not a literal type any more. */
+  currency: string;
+  currencyBasis: CurrencyBasis;
+  currencyConfidence: number;
+  /** Present only when the alert states a different amount than it books. */
+  statedAmount?: string;
+  statedCurrency?: string;
   accountLast4?: string;
   paymentRef?: string;
   channel: SpotChannel;
@@ -14,93 +28,34 @@ export type SpotAlert = {
   rawExcerpt: string;
 };
 
-const months: Record<string, string> = {
-  jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06",
-  jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12",
+export type ParseContext = {
+  postedAt?: string;
+  subject?: string;
+  /** Which vocabulary pack to read with. Defaults to `en-IN`, the historical behaviour. */
+  locale?: LocalePack;
+  /** Owner timezone, IANA. Alert bodies print wall-clock time without an offset. */
+  timezone?: string;
+  /** `core.owner.default_currency_code`. The detector terminates here. */
+  defaultCurrency?: string;
+  /** `core.owner.metadata->>'country_code'`. */
+  country?: string | null;
+  /** Sender mailbox, for the TLD signal. */
+  sender?: string | null;
+  /** Resolved `ref.institution.country_code` for the sender, when known. */
+  institutionCountry?: string | null;
+  /** `base_currency_code` of the account this alert matches, when known. */
+  accountCurrency?: string | null;
 };
 
-const debitVerb = /\b(debited|spent|paid|sent to|withdrawn|purchase of|txn of)\b/i;
-const creditVerb = /\b(credited(?:\s+by|\s+to)?|received(?:\s+from)?|deposited|refund(?:\s+of)?|inward\s+(?:neft|imps|rtgs))\b/i;
-const amountPattern = /(?:INR|Rs\.?|₹)\s*([\d,]+\.?\d*)/gi;
-const balanceCue = /\b(?:avail(?:able)?|avl)\s*bal|\bbalance\b|\bbal\b/i;
-const vpaPattern = /\b([A-Za-z0-9][A-Za-z0-9._-]{0,40}@[A-Za-z0-9][A-Za-z0-9.-]{1,40})\b/;
-/** A newsletter can say "credited" next to a rupee figure. A spot needs an account movement. */
-const accountMovement =
-  /\b(?:is|was|been)\s+(?:debited|credited)\b|\b(?:debited|credited)\s+(?:from|to)\s+your\b|\b(?:debited|credited)\s+from\s+(?:your\s+)?(?:a\/c|acct|account|card)\b|\btowards\s+VPA\b|\b(?:a\/c|acct|account|card)\s+ending\b/i;
-// "Never share your OTP" stays a merchant-title blacklist entry below. It must not
-// reject the whole message: real debit alerts carry that sentence in the footer.
-const disclaimerNoise = /\b(?:unauthori[sz]ed\b.*\bfraudulent|\bfraudulent\b.*\bunauthori[sz]ed|statutory\s+warning)\b/i;
-/** Subject lines that are bank CRM, not a debit or credit. */
-const nonTransactionSubject = [
-  /\b(?:otp|one[- ]time password|verification code|secret code)\b/i,
-  /\b(?:logged in|login alert|password reset|m-?pin|access alert)\b/i,
-  /\b(?:e-statement|account statement|monthly statement)\b/i,
-  /\b(?:re-?kyc|kyc|cibil|mandate created|standing instruction registered)\b/i,
-  /\b(?:card dispatched|cheque book)\b/i,
-  /\b(?:special offer|pre-approved|loan offer)\b/i,
-];
-/** Body phrases that are the point of the mail, not a footer on a real debit. */
-const nonTransactionBody = [
-  /is your (?:one[- ]time password|otp|secret code)/i,
-  /use code \d{4,8} to/i,
-  /successfully logged in/i,
-  /your cibil score is/i,
-];
 const alertPrefix = /^(?:us|info|alert|dr|cr)\s*:\s*/i;
-/** Marketing / bank-footer phrases that must never become a merchant title. */
-const boilerplatePatterns: RegExp[] = [
-  /support you in every\s*ste/i,
-  /\baccount\s+ending\s+in\s+\d+/i,
-  /unauthori[sz]ed\s+and\s+fraudule/i,
-  /never\s+share\s+(?:your\s+)?otp/i,
-  /thank you for banking/i,
-  /warm regards/i,
-  /customer care/i,
-  /terms and conditions/i,
-  /all rights reserved/i,
-  /we are here to help/i,
-  /netbanking\s*>?\s*insta\s*alerts/i,
-  /visit your br/i,
-  /know your available\s*bala/i,
-  /please visit mycards/i,
-  /be secure or error-free/i,
-  /outstanding amount and transactions/i,
-  /the number listed/i,
-  /unsubscribe/i,
-  /\be-?mandates?\b/i,
-  /^know your\b/i,
-  /^your system\b/i,
-  /^the date of this notice\b/i,
-  /^inform you that\b/i,
-  /^complete your online purchase\b/i,
-  /^make the payment\b/i,
-  /\bwe(?:'re| are) writing\b/i,
-  /\bwe have received payment\b/i,
-  /^hdfc bank\b/i,
-  /^icici bank\b/i,
-  /anytime anywhere by using/i,
-  /\bimobile\b/i,
-  /aforementioned current\/savings/i,
-  /^be paid\b/i,
-  /^your bank account\b/i,
-  /every corner of your home/i,
-  /recovery of the overdue/i,
-  /^set-?off\b/i,
-  /\byou in accordance\b/i,
-  /\(\s*toll free\s*\)/i,
-  /\byour account\s+\S+\s+is credited\b/i,
-];
-const weakMerchant = /^(?:time|times|all|home|us|it|this|that|the|here|there|now|today|tomorrow)$/i;
-const ownAccountPhrase = /^(?:your\s+)?(?:[\w&.\s-]+?\s+)?(?:bank\s+)?(?:a\/c|acct|account|card)(?:\s+ending(?:\s+in)?\s+\d{4})?$/i;
-// Prefer "towards" / "paid to" before bare "to". Do not use "to merchant" — it eats names like "Merchant Cafe".
-const debitCounterpartyMark =
-  /\b(?:towards|paid\s+to|sent\s+to|to|at)\s+/gi;
-const creditCounterpartyMark =
-  /\b(?:transferred\s+from|received\s+from|credited\s+by|from)\s+/gi;
-const counterpartyStop = /\b(?:on|via|ref|utr|rrn|avail|for|a\/c|to|at|from|towards|total|ending|with|umrn)\b|[.]/i;
+
 const vpaParenMerchant =
   /\b(?:towards|to)\s+VPA\s+\S+@\S+\s*\(([^)]+)\)|\bVPA\s+\S+@\S+\s*\(([^)]+)\)|\bVPA\s*\(([^)]+)\)|\bVPA\s+([A-Za-z][A-Za-z0-9._-]{1,40})\b/i;
 const cardAtMerchant = /\bat\s+([A-Z][A-Z0-9]{2,}(?:\s+[A-Z][A-Z0-9]+)*)\b/;
+
+function defaultPack(): LocalePack {
+  return resolveLocalePack({});
+}
 
 /** Due notes, loan reminders, and marketing are not recorded activity. */
 export function isNoticeEmail(subject: string, body: string): boolean {
@@ -121,54 +76,94 @@ export function isNoticeEmail(subject: string, body: string): boolean {
   return false;
 }
 
-export function isNonTransactionalEmail(subject: string, body: string): boolean {
+export function isNonTransactionalEmail(subject: string, body: string, locale: LocalePack = defaultPack()): boolean {
   const header = subject.trim();
-  if (header && nonTransactionSubject.some((pattern) => pattern.test(header))) {
+  if (header && locale.nonTransactionSubject.some((pattern) => pattern.test(header))) {
     return true;
   }
-  return Boolean(body) && nonTransactionBody.some((pattern) => pattern.test(body));
+  return Boolean(body) && locale.nonTransactionBody.some((pattern) => pattern.test(body));
 }
 
 export function parseTransactionFromEmail(
   text: string,
-  hint?: { postedAt?: string; subject?: string },
+  hint: ParseContext = {},
 ): SpotAlert | null {
+  const locale = hint.locale ?? defaultPack();
   const clean = readableText(text);
-  const subject = readableText(hint?.subject ?? "");
-  if (isNonTransactionalEmail(subject, clean)) {
+  const subject = readableText(hint.subject ?? "");
+  if (isNonTransactionalEmail(subject, clean, locale)) {
     return null;
   }
-  if (!clean || disclaimerNoise.test(clean)) {
+  if (!clean || locale.disclaimerNoise.test(clean)) {
     return null;
   }
-  const direction = directionOf(clean);
+  const direction = directionOf(clean, locale);
   if (!direction) {
     return null;
   }
-  const amount = amountNear(clean, direction.index);
+
+  // The booked currency decides how the number is read, so detect it before
+  // choosing an amount rather than after.
+  const detection = detectCurrency({
+    text: clean,
+    senderAddress: hint.sender ?? null,
+    institutionCountry: hint.institutionCountry ?? null,
+    ownerCountry: hint.country ?? null,
+    ownerDefaultCurrency: hint.defaultCurrency ?? null,
+    accountCurrency: hint.accountCurrency ?? null,
+  });
+
+  const money = readMoney(
+    clean,
+    {
+      text: clean,
+      senderAddress: hint.sender ?? null,
+      institutionCountry: hint.institutionCountry ?? null,
+      ownerCountry: hint.country ?? null,
+      ownerDefaultCurrency: hint.defaultCurrency ?? null,
+      accountCurrency: hint.accountCurrency ?? null,
+    },
+    {
+      excludeIndices: [...balanceSpans(clean, locale), ...structuralSpans(clean)],
+      // The transaction amount sits near the moving verb. A balance or a
+      // reference written later in the body must not win on text order alone.
+      anchorIndex: direction.index,
+    },
+  );
+
+  const amount = money?.booked.amount ?? null;
   if (!amount) {
     return null;
   }
-  if (!accountMovement.test(clean) && !vpaPattern.test(clean)) {
+  if (!locale.accountMovement.test(clean) && !(locale.vpaPattern && locale.vpaPattern.test(clean))) {
     return null;
   }
   if (isNoticeEmail(subject, clean)) {
     return null;
   }
-  if (/\byou in accordance\b/i.test(clean) && !structuredMerchant(clean)) {
+  if (/\byou in accordance\b/i.test(clean) && !structuredMerchant(clean, locale)) {
     return null;
   }
-  const counterparty = counterpartyOf(clean, direction.flow);
-  if (isBoilerplateCounterparty(counterparty)) {
+  const counterparty = counterpartyOf(clean, direction.flow, locale);
+  if (isBoilerplateCounterparty(counterparty, locale)) {
     return null;
   }
   const accountLast4 = clean.match(/(?:a\/c|acct|account|card)\s*(?:ending\s*(?:in\s*)?)?(?:no\.?)?\s*[*xX]*(\d{4})\b/i)?.[1];
   const paymentRef = clean.match(/\b(?:ref(?:erno)?|rrn|utr|txn\s*id)[:\s]*([0-9]{10,12}|[A-Za-z0-9]{12,16})\b/i)?.[1];
-  const postedAt = postedAtFromText(clean) ?? hint?.postedAt;
+  const postedAt = postedAtFromText(clean, hint.timezone, locale) ?? hint.postedAt;
+
+  const bookedCurrency = money?.booked.currency ?? detection;
+  const stated = money?.stated ?? null;
+
   return {
     flow: direction.flow,
     amount,
-    currency: "INR",
+    currency: bookedCurrency.code,
+    currencyBasis: bookedCurrency.basis,
+    currencyConfidence: bookedCurrency.confidence,
+    ...(stated && stated.amount !== amount
+      ? { statedAmount: stated.amount, statedCurrency: stated.currency.code }
+      : {}),
     accountLast4,
     paymentRef,
     channel: channelOf(clean),
@@ -176,6 +171,53 @@ export function parseTransactionFromEmail(
     postedAt,
     rawExcerpt: clean.slice(0, 500),
   };
+}
+
+/** True when the alert should be surfaced for review rather than trusted silently. */
+export function currencyNeedsReview(alert: Pick<SpotAlert, "currency" | "currencyBasis" | "currencyConfidence">): boolean {
+  return needsReview({
+    code: alert.currency,
+    basis: alert.currencyBasis,
+    confidence: alert.currencyConfidence,
+    evidence: null,
+  });
+}
+
+/**
+ * Spans the text already claims as a balance, so the amount reader does not
+ * mistake "Avl Bal INR 52,300.00" for the transaction.
+ */
+function balanceSpans(clean: string, locale: LocalePack): Array<[number, number]> {
+  const spans: Array<[number, number]> = [];
+  const cue = new RegExp(locale.balanceCue.source, "gi");
+  for (const match of clean.matchAll(cue)) {
+    const start = match.index ?? 0;
+    // The cue is followed by the figure it introduces, not by the whole sentence.
+    spans.push([start, Math.min(clean.length, start + 40)]);
+  }
+  return spans;
+}
+
+/**
+ * Spans that are structurally never a transaction amount: the account suffix in
+ * "A/C ending 4321" and the date/time in "on 18-Oct-2026 10:45:12".
+ */
+function structuralSpans(clean: string): Array<[number, number]> {
+  const spans: Array<[number, number]> = [];
+
+  const account = /(?:a\/c|acct|account|card|konto|karte|compte|carte|cuenta|tarjeta|conta|cartão|cartao)\s*(?:ending\s*(?:in\s*)?|no\.?|endet\s+auf|se\s+terminant\s+par|terminad[oa]\s+en|terminado\s+em)?\s*[*xX]*\d{4}\b/gi;
+  for (const match of clean.matchAll(account)) {
+    spans.push([match.index ?? 0, (match.index ?? 0) + match[0].length]);
+  }
+
+  // Dates in the separators each market actually writes: 18-Oct-2026, 18.10.2026,
+  // 18/10/2026. The trailing time is included so "10:45:12" is not read as money.
+  const date = /\b\d{1,2}[/.-](?:[A-Za-zÀ-ÿ]{3,9}|\d{1,2})[/.-]\d{4}(?:[ ,T]+\d{1,2}:\d{2}(?::\d{2})?(?:\s*(?:AM|PM|am|pm))?)?\b/g;
+  for (const match of clean.matchAll(date)) {
+    spans.push([match.index ?? 0, (match.index ?? 0) + match[0].length]);
+  }
+
+  return spans;
 }
 
 export function spotIdempotencyKey(
@@ -238,9 +280,9 @@ function unescapeHtmlEntities(text: string): string {
     .replace(/&#8377;/g, "₹");
 }
 
-function directionOf(clean: string): { flow: SpotAlert["flow"]; index: number } | null {
-  const debit = debitVerb.exec(clean);
-  const credit = creditVerb.exec(clean);
+function directionOf(clean: string, locale: LocalePack): { flow: SpotAlert["flow"]; index: number } | null {
+  const debit = locale.debitVerbs.exec(clean);
+  const credit = locale.creditVerbs.exec(clean);
   if (!debit && !credit) {
     return null;
   }
@@ -248,31 +290,6 @@ function directionOf(clean: string): { flow: SpotAlert["flow"]; index: number } 
     return { flow: "DEBIT", index: debit.index };
   }
   return { flow: "CREDIT", index: credit!.index };
-}
-
-function amountNear(clean: string, verbIndex: number): string | null {
-  const hits: { index: number; amount: string }[] = [];
-  for (const match of clean.matchAll(amountPattern)) {
-    const start = match.index ?? 0;
-    const window = clean.slice(Math.max(0, start - 40), start);
-    if (balanceCue.test(window)) {
-      continue;
-    }
-    const numeric = match[1]?.replace(/,/g, "") ?? "";
-    if (!/^\d+(?:\.\d+)?$/.test(numeric)) {
-      continue;
-    }
-    const value = Number(numeric);
-    if (!(value > 0)) {
-      continue;
-    }
-    hits.push({ index: start, amount: value.toFixed(2) });
-  }
-  if (hits.length === 0) {
-    return null;
-  }
-  hits.sort((left, right) => Math.abs(left.index - verbIndex) - Math.abs(right.index - verbIndex));
-  return hits[0]?.amount ?? null;
 }
 
 function channelOf(clean: string): SpotChannel {
@@ -285,16 +302,16 @@ function channelOf(clean: string): SpotChannel {
   return "OTHER";
 }
 
-function counterpartyOf(clean: string, flow: SpotAlert["flow"]): string {
-  const structured = structuredMerchant(clean);
+function counterpartyOf(clean: string, flow: SpotAlert["flow"], locale: LocalePack): string {
+  const structured = structuredMerchant(clean, locale);
   if (structured) {
     return structured;
   }
-  const named = namedCounterparty(clean, flow);
+  const named = namedCounterparty(clean, flow, locale);
   if (named) {
     return named;
   }
-  const vpa = clean.match(vpaPattern)?.[1];
+  const vpa = locale.vpaPattern ? clean.match(locale.vpaPattern)?.[1] : null;
   if (vpa) {
     return labelForVpa(vpa);
   }
@@ -302,62 +319,66 @@ function counterpartyOf(clean: string, flow: SpotAlert["flow"]): string {
 }
 
 /** True when text is bank marketing / own-account phrasing, not a merchant. */
-export function isBoilerplateCounterparty(text: string): boolean {
+export function isBoilerplateCounterparty(text: string, locale: LocalePack = defaultPack()): boolean {
   const value = text.trim();
   if (value.length < 2) {
     return true;
   }
-  if (ownAccountPhrase.test(value)) {
+  if (locale.ownAccountPhrase.test(value)) {
     return true;
   }
   if (/^vpa\b/i.test(value) && !/\(/.test(value) && value.length < 12) {
     return true;
   }
-  if (weakMerchant.test(value) || value.length < 3) {
+  if (locale.weakMerchant.test(value) || value.length < 3) {
     return true;
   }
-  return boilerplatePatterns.some((pattern) => pattern.test(value));
+  return locale.boilerplate.some((pattern) => pattern.test(value));
 }
 
 /** HDFC-style "towards VPA x@y (Merchant)" / card "at APPLESERVICES". */
-function structuredMerchant(clean: string): string | null {
+function structuredMerchant(clean: string, locale: LocalePack): string | null {
   if (/\bint\.?\s*pd\b/i.test(clean)) {
     return "Interest";
   }
   const imps = clean.match(/\bIMPS:\d+\/([A-Za-z][A-Za-z .']+?)(?=\s+Available|\s+For\b|$)/i);
   if (imps?.[1]) {
     const name = titleCase(imps[1]);
-    if (name && !isBoilerplateCounterparty(name)) {
+    if (name && !isBoilerplateCounterparty(name, locale)) {
       return name.slice(0, 120);
     }
   }
   const vpa = clean.match(vpaParenMerchant);
   if (vpa) {
-    const name = cleanMerchantCandidate(vpa[1] ?? vpa[2] ?? vpa[3] ?? vpa[4] ?? "");
-    if (name && !isBoilerplateCounterparty(name)) {
+    const name = cleanMerchantCandidate(vpa[1] ?? vpa[2] ?? vpa[3] ?? vpa[4] ?? "", locale);
+    if (name && !isBoilerplateCounterparty(name, locale)) {
       return name.slice(0, 120);
     }
   }
   const at = clean.match(cardAtMerchant);
   if (at?.[1]) {
-    const name = cleanMerchantCandidate(at[1]);
-    if (name && !isBoilerplateCounterparty(name)) {
+    const name = cleanMerchantCandidate(at[1], locale);
+    if (name && !isBoilerplateCounterparty(name, locale)) {
       return name.slice(0, 120);
     }
   }
   return null;
 }
 
-function namedCounterparty(clean: string, flow: SpotAlert["flow"]): string | null {
+function namedCounterparty(clean: string, flow: SpotAlert["flow"], locale: LocalePack): string | null {
+  // Mint fresh global regexes: `lastIndex` survives between calls otherwise, and a
+  // pack is cached for the life of the process.
+  const source = flow === "CREDIT" ? locale.creditCounterpartyMark.source : locale.debitCounterpartyMark.source;
+  const flags = flow === "CREDIT" ? locale.creditCounterpartyMark.flags : locale.debitCounterpartyMark.flags;
+  const marks = [...clean.matchAll(new RegExp(source, flags))];
   // First match wins (near the txn clause). Last-match used to grab footer "to support you…".
-  const marks = [...clean.matchAll(flow === "CREDIT" ? creditCounterpartyMark : debitCounterpartyMark)];
   for (const mark of marks) {
     if (mark.index === undefined) {
       continue;
     }
     const rest = clean.slice(mark.index + mark[0].length);
-    const trimmed = cleanMerchantCandidate(rest.split(counterpartyStop)[0] ?? "");
-    if (!trimmed || isBoilerplateCounterparty(trimmed)) {
+    const trimmed = cleanMerchantCandidate(rest.split(locale.counterpartyStop)[0] ?? "", locale);
+    if (!trimmed || isBoilerplateCounterparty(trimmed, locale)) {
       continue;
     }
     // Reject only opaque terminal IDs (hex/digits), not short personal names like "Riya".
@@ -373,7 +394,7 @@ function titleCase(text: string): string {
   return text.trim().replace(/\s+/g, " ").replace(/\b[a-z]/g, (ch) => ch.toUpperCase());
 }
 
-function cleanMerchantCandidate(text: string): string {
+function cleanMerchantCandidate(text: string, locale: LocalePack): string {
   // Mark regexes already consume "to merchant" / "to vpa" — do not strip a merchant name like "Merchant Cafe".
   let trimmed = text.replace(alertPrefix, "").trim();
   const paren = trimmed.match(/^\s*\(([^)]+)\)\s*$/);
@@ -381,7 +402,9 @@ function cleanMerchantCandidate(text: string): string {
     trimmed = paren[1].trim();
   }
   trimmed = trimmed.replace(/^vpa\s+/i, "");
-  trimmed = trimmed.replace(vpaPattern, "").trim();
+  if (locale.vpaPattern) {
+    trimmed = trimmed.replace(locale.vpaPattern, "").trim();
+  }
   trimmed = trimmed.replace(/\s+ending\s+in\s+\d{4}\b/gi, "");
   trimmed = trimmed.replace(/\bBanking Corp\.?\b/gi, "").replace(/\b(?:Pvt\.?|Ltd\.?|Inc\.?|Limited)\b/gi, "");
   trimmed = trimmed.replace(/\*+/g, "").replace(/\s+/g, " ").trim();
@@ -417,12 +440,64 @@ function isTerminalVpaLocal(local: string): boolean {
   return /^[0-9a-fA-F]+$/.test(token) || /^\d+$/.test(token) || /^q\d+$/i.test(token);
 }
 
-function postedAtFromText(clean: string): string | undefined {
-  const match = clean.match(/\b(\d{1,2})[/-]([A-Za-z]{3}|\d{1,2})[/-](\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+/**
+ * Minutes east of UTC for a timezone, at a given instant. Uses `Intl`, so no
+ * offset table is embedded and DST is handled for the date in the alert.
+ */
+function offsetMinutes(timezone: string, at: Date): number {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  const parts = formatter.formatToParts(at);
+  const pick = (type: string): number => Number(parts.find((part) => part.type === type)?.value ?? "0");
+  const asUtc = Date.UTC(
+    pick("year"),
+    pick("month") - 1,
+    pick("day"),
+    pick("hour") % 24,
+    pick("minute"),
+    pick("second"),
+  );
+  return Math.round((asUtc - at.getTime()) / 60000);
+}
+
+function isoOffset(minutes: number): string {
+  const sign = minutes >= 0 ? "+" : "-";
+  const absolute = Math.abs(minutes);
+  return `${sign}${String(Math.floor(absolute / 60)).padStart(2, "0")}:${String(absolute % 60).padStart(2, "0")}`;
+}
+
+/** True when `timezone` is an IANA zone this runtime recognises. */
+export function isValidTimeZone(timezone: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: timezone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Read a timestamp out of an alert body.
+ *
+ * Alert bodies print wall-clock time in the *market's* zone with no offset, so
+ * the owner timezone (or the pack's own default) supplies it. The result is
+ * always an ISO string with an explicit offset, because the column is
+ * `timestamptz`.
+ */
+export function postedAtFromText(clean: string, timezone?: string, locale: LocalePack = defaultPack()): string | undefined {
+  const match = clean.match(/\b(\d{1,2})[/-]([A-Za-zÀ-ÿ]{3,9}|\d{1,2})[/-](\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
   if (!match) {
     return undefined;
   }
-  const month = monthOf(match[2] ?? "");
+  const month = monthOf(match[2] ?? "", locale);
   const day = Number(match[1]);
   const year = Number(match[3]);
   const hour = Number(match[4] ?? "0");
@@ -431,14 +506,35 @@ function postedAtFromText(clean: string): string | undefined {
   if (!month || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 59) {
     return undefined;
   }
-  const stamp = `${year}-${month}-${String(day).padStart(2, "0")}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:${String(second).padStart(2, "0")}+05:30`;
+
+  // Build the naive stamp, then resolve the offset for that moment in the zone.
+  // A first pass with UTC gives a close enough instant that the offset is right
+  // for every zone except the DST transition hour itself.
+  const naive = `${year}-${month}-${String(day).padStart(2, "0")}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:${String(second).padStart(2, "0")}Z`;
+  const asUtc = new Date(naive);
+  if (Number.isNaN(asUtc.getTime())) {
+    return undefined;
+  }
+  const requested = (timezone ?? "").trim() || locale.defaultTimezone;
+  const zone = isValidTimeZone(requested) ? requested : "UTC";
+  // The alert prints wall-clock time in `zone`, so the instant it denotes is the
+  // naive stamp minus that zone's offset. Confirm the offset against the true
+  // instant so a DST transition hour does not shift the reading.
+  const offset = offsetMinutes(zone, asUtc);
+  const instant = new Date(asUtc.getTime() - offset * 60000);
+  const confirmed = offsetMinutes(zone, instant);
+  // The written clock time is `naive`; only the offset is new information.
+  const stamp = `${naive.slice(0, 19)}${isoOffset(confirmed)}`;
   return Number.isNaN(new Date(stamp).getTime()) ? undefined : stamp;
 }
 
-function monthOf(token: string): string | null {
+function monthOf(token: string, locale: LocalePack): string | null {
   if (/^\d{1,2}$/.test(token)) {
     const month = Number(token);
     return month >= 1 && month <= 12 ? String(month).padStart(2, "0") : null;
   }
-  return months[token.slice(0, 3).toLowerCase()] ?? null;
+  // Match the longest available prefix of the written month so "März" and "mär"
+  // both resolve, and "Sept" does not beat "Sep".
+  const written = token.slice(0, 4).toLowerCase();
+  return locale.months[written] ?? locale.months[written.slice(0, 3)] ?? null;
 }

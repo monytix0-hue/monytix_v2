@@ -41,6 +41,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.monytix.app.R
+import com.monytix.app.shell.Money
 import com.monytix.app.shell.UiSessionStore
 import com.monytix.app.theme.FigIcon
 import com.monytix.app.theme.LocalPersonalTheme
@@ -74,7 +75,7 @@ fun LiveHome(
                 .padding(top = PersonalSpace.s20, bottom = 128.dp),
             verticalArrangement = Arrangement.spacedBy(PersonalSpace.s20),
         ) {
-            Enter(0) { Welcome(snapshot, onOpen) }
+            Enter(0) { Welcome(snapshot, onOpen, store) }
             Enter(64) { Missions(snapshot, onViewMissions) }
             Enter(128) { Decisions(snapshot, onViewDecisions) }
             Enter(195) { Attention(snapshot, onOpen) }
@@ -86,7 +87,7 @@ fun LiveHome(
 }
 
 @Composable
-private fun Welcome(snapshot: LiveSnapshot, onOpen: (LivePage) -> Unit) {
+private fun Welcome(snapshot: LiveSnapshot, onOpen: (LivePage) -> Unit, store: UiSessionStore) {
     val theme = LocalPersonalTheme.current
     Column(verticalArrangement = Arrangement.spacedBy(PersonalSpace.s20)) {
         Text(
@@ -116,7 +117,7 @@ private fun Welcome(snapshot: LiveSnapshot, onOpen: (LivePage) -> Unit) {
             FigIcon(R.drawable.fig_chevron, 20.dp)
         }
         snapshot.previews.take(8).forEach { row ->
-            val money = formatMoney(row.currency, row.amount)
+            val money = formatMoney(row.currency, row.amount, store)
             Row(
                 horizontalArrangement = Arrangement.spacedBy(PersonalSpace.s12),
                 verticalAlignment = Alignment.CenterVertically,
@@ -519,15 +520,24 @@ private fun transactionFact(snapshot: LiveSnapshot): String {
     return if (snapshot.hasRecordedTransactions) "Recorded" else "No recorded transactions"
 }
 
-private fun formatMoney(currency: String?, amount: String?): String {
-    if (currency.isNullOrBlank() || amount.isNullOrBlank()) {
-        return Unavailable
-    }
-    val value = amount.replace(",", "").toDoubleOrNull()
-    val formatted = if (value != null) {
-        String.format(java.util.Locale.US, "%,.2f", value)
-    } else {
-        amount
-    }
-    return "$currency $formatted"
+/**
+ * A booked amount in its own currency.
+ *
+ * The code comes from the row, never from a constant: a USD row inside an INR
+ * report is still USD. `minorUnits` comes from `ref.currency` via the bootstrap, so
+ * a zero-decimal currency such as JPY does not grow two zeros.
+ */
+private fun formatMoney(
+    currency: String?,
+    amount: String?,
+    store: UiSessionStore? = null,
+): String {
+    val code = store?.displayCurrency(currency) ?: Money.currency(currency)
+    return Money.format(
+        raw = amount,
+        currency = code,
+        locale = store?.preferences?.moneyLocale ?: java.util.Locale.getDefault(),
+        minorUnits = store?.minorUnits(code),
+        fallback = Unavailable,
+    )
 }

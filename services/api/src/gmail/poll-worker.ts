@@ -65,6 +65,10 @@ async function tick(url: string): Promise<void> {
       history_checkpoint: string | null;
       credential_ciphertext: string;
       initial_window_drained: boolean;
+      owner_timezone: string | null;
+      owner_currency: string | null;
+      owner_country: string | null;
+      owner_locale: string | null;
     }>("SELECT * FROM ops.list_gmail_poll_targets()");
     let stored = 0;
     let skipped = 0;
@@ -80,6 +84,10 @@ async function tick(url: string): Promise<void> {
           refreshToken: unsealCredential(row.credential_ciphertext, encryptionKey),
           historyCheckpoint: row.history_checkpoint,
           initialWindowDrained: row.initial_window_drained === true,
+          timezone: row.owner_timezone,
+          defaultCurrency: row.owner_currency,
+          country: row.owner_country,
+          locale: row.owner_locale,
         };
         const counts = await pollOne(connection, row.gmail_connection_id, row.owner_id, client);
         stored += counts.stored;
@@ -135,14 +143,15 @@ async function pollOne(
     },
     saveDueDate: async (due) => {
       await client.query(
-        "SELECT ops.save_due_date_notification($1::uuid, $2::uuid, $3, $4, $5::numeric, $6::date, $7)",
-        [ownerId, connectionId, due.messageId, due.biller, due.amount, due.dueDate, due.category],
+        "SELECT ops.save_due_date_notification($1::uuid, $2::uuid, $3, $4, $5::numeric, $6::date, $7, $8)",
+        [ownerId, connectionId, due.messageId, due.biller, due.amount, due.dueDate, due.category, due.currency],
       );
     },
     saveSpotTransaction: async (spot) => {
       const saved = await client.query<{ result: { outcome?: string; gmail_spot_transaction_id?: string } }>(
         `SELECT ops.save_gmail_spot_transaction(
-           $1::uuid, $2::uuid, $3, $4, $5, $6::numeric, $7, $8, $9, $10, $11::timestamptz, $12
+           $1::uuid, $2::uuid, $3, $4, $5, $6::numeric, $7, $8, $9, $10, $11::timestamptz, $12,
+           $13, $14, $15::numeric, $16::numeric, $17
          ) AS result`,
         [
           ownerId,
@@ -157,6 +166,11 @@ async function pollOne(
           spot.counterparty,
           spot.postedAt ?? null,
           spot.rawExcerpt,
+          spot.currency,
+          spot.currencyBasis,
+          spot.currencyConfidence,
+          spot.statedAmount ?? null,
+          spot.statedCurrency ?? null,
         ],
       );
       const spotId = saved.rows[0]?.result?.gmail_spot_transaction_id;

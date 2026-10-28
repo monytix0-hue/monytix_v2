@@ -17,6 +17,12 @@ final class UiSessionStore {
     private(set) var mileSummaryData: Data?
     private(set) var mileEventsData: Data?
 
+    /// The owner's home currency, timezone and country, from the same single prefetch.
+    /// Every money formatter reads `homeCurrency` from here, so no view invents a code.
+    private(set) var preferences: OwnerPreferences?
+    /// Formatting facts for the currencies this owner holds, keyed by ISO code.
+    private(set) var currencyFormats: [String: CurrencyFormat] = [:]
+
     private(set) var liveReady = false
     private(set) var decisionsReady = false
     private(set) var missionsReady = false
@@ -43,6 +49,8 @@ final class UiSessionStore {
         missionDefinitionsData = jsonData(root["mission_definitions"])
         mileSummaryData = jsonData(root["mile_summary"])
         mileEventsData = jsonData(root["mile_events"])
+        preferences = OwnerPreferences(json: root["preferences"])
+        currencyFormats = parseCurrencyFormats(root["currency_formats"])
         markReady()
     }
 
@@ -106,11 +114,43 @@ final class UiSessionStore {
         missionDefinitionsData = nil
         mileSummaryData = nil
         mileEventsData = nil
+        preferences = nil
+        currencyFormats = [:]
         insightCache.removeAll()
         liveReady = false
         decisionsReady = false
         missionsReady = false
         mileReady = false
+    }
+
+    /// Minor units for a code, from `ref.currency` when the bootstrap shipped it.
+    /// A `nil` answer means "use the platform's default", which is right for every
+    /// code the server can detect.
+    func minorUnits(for currency: String?) -> Int? {
+        guard let code = currency?.uppercased() else { return nil }
+        return currencyFormats[code]?.minorUnits
+    }
+
+    /// The currency a row should be rendered in: its own, else the home currency.
+    func displayCurrency(row: String?, account: String? = nil) -> String? {
+        Money.currency(row: row, account: account, home: preferences?.defaultCurrencyCode)
+    }
+
+    private func parseCurrencyFormats(_ value: Any?) -> [String: CurrencyFormat] {
+        guard let rows = value as? [String: Any] else { return [:] }
+        var out: [String: CurrencyFormat] = [:]
+        for (code, raw) in rows {
+            guard let object = raw as? [String: Any] else { continue }
+            let normalised = code.uppercased()
+            out[normalised] = CurrencyFormat(
+                code: (object["code"] as? String)?.uppercased() ?? normalised,
+                displayName: object["displayName"] as? String,
+                symbol: object["symbol"] as? String,
+                minorUnits: object["minorUnits"] as? Int,
+                monetary: object["monetary"] as? Bool
+            )
+        }
+        return out
     }
 
     private func markReady() {
@@ -133,5 +173,39 @@ final class UiSessionStore {
     private func jsonData(_ value: Any?) -> Data? {
         guard let value, JSONSerialization.isValidJSONObject(value) else { return nil }
         return try? JSONSerialization.data(withJSONObject: value)
+    }
+}
+
+/// `preferences` inside `/v1/ui/bootstrap`. Mirrors `OwnerPreferences` on the API.
+struct OwnerPreferences: Equatable {
+    let defaultCurrencyCode: String
+    let timezoneName: String
+    let countryCode: String?
+    let locale: String?
+
+    init?(json: Any?) {
+        guard let object = json as? [String: Any],
+              let currency = (object["defaultCurrencyCode"] as? String)?.uppercased(),
+              !currency.isEmpty else {
+            return nil
+        }
+        defaultCurrencyCode = currency
+        timezoneName = (object["timezoneName"] as? String) ?? "UTC"
+        countryCode = (object["countryCode"] as? String)?.uppercased()
+        locale = object["locale"] as? String
+    }
+
+    init(defaultCurrencyCode: String, timezoneName: String, countryCode: String?, locale: String?) {
+        self.defaultCurrencyCode = defaultCurrencyCode.uppercased()
+        self.timezoneName = timezoneName
+        self.countryCode = countryCode?.uppercased()
+        self.locale = locale
+    }
+
+    /// The `Locale` the device should format money with, honouring an explicit owner
+    /// locale before falling back to the device's own.
+    var moneyLocale: Locale {
+        guard let locale, !locale.isEmpty else { return .current }
+        return Locale(identifier: locale)
     }
 }

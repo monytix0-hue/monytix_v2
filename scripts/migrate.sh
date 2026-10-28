@@ -104,6 +104,9 @@ for file in $(find /database/migrations -maxdepth 1 -type f -name '*.sql' | sort
     0058_transaction_correction.sql) code="TRANSACTION-CORRECTION" ;;
     0059_global_taxonomy.sql) code="GLOBAL-TAXONOMY" ;;
     0060_currency_reference.sql) code="CURRENCY-REFERENCE" ;;
+    0061_fix_category_ownership.sql) code="CATEGORY-OWNERSHIP" ;;
+    0062_residual_aliases.sql) code="RESIDUAL-ALIASES" ;;
+    0063_residual_backfill.sql) code="RESIDUAL-BACKFILL" ;;
     *) code="" ;;
   esac
 

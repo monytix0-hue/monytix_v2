@@ -39,7 +39,7 @@ struct LiveDetailView: View {
     var body: some View {
         Group {
             if page == .transactions {
-                TransactionLedger(api: api, token: token, onBack: onBack)
+                TransactionLedger(api: api, token: token, onBack: onBack, store: store)
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: PersonalSpace.s20) {

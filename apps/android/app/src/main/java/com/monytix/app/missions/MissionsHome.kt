@@ -44,7 +44,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.monytix.app.R
 import com.monytix.app.auth.MonytixApi
-import com.monytix.app.shell.UiSessionStore
 import com.monytix.app.theme.FigIcon
 import com.monytix.app.theme.LocalPersonalTheme
 import com.monytix.app.theme.PersonalRadius

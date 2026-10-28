@@ -22,6 +22,8 @@ final class UiSessionStore {
     private(set) var missionsReady = false
     private(set) var mileReady = false
 
+    private var insightCache: [String: Data] = [:]
+
     init(api: MonytixApi, token: @escaping (Bool) async -> String?) {
         self.api = api
         self.token = token
@@ -68,7 +70,31 @@ final class UiSessionStore {
     }
 
     func invalidateAfterImport() async {
+        insightCache.removeAll()
         await prefetch()
+    }
+
+    /// Ledger insights are cached per date window so switching filters does not repeat the analytics call.
+    func ledgerInsights(from: String?, to: String?) async -> Data? {
+        let key = "\(from ?? "")|\(to ?? "")"
+        if let cached = insightCache[key] {
+            return cached
+        }
+        var query: [URLQueryItem] = []
+        if let from { query.append(URLQueryItem(name: "from", value: from)) }
+        if let to { query.append(URLQueryItem(name: "to", value: to)) }
+        var components = URLComponents()
+        components.queryItems = query.isEmpty ? nil : query
+        let suffix = components.percentEncodedQuery.map { "?\($0)" } ?? ""
+        guard let data = await api.getJSON(path: "/v1/ledger/insights\(suffix)", token: token) else {
+            return nil
+        }
+        insightCache[key] = data
+        return data
+    }
+
+    func invalidateInsights() {
+        insightCache.removeAll()
     }
 
     func clear() {
@@ -80,6 +106,7 @@ final class UiSessionStore {
         missionDefinitionsData = nil
         mileSummaryData = nil
         mileEventsData = nil
+        insightCache.removeAll()
         liveReady = false
         decisionsReady = false
         missionsReady = false

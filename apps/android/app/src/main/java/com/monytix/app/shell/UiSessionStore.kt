@@ -39,6 +39,8 @@ class UiSessionStore(
     var mileReady by mutableStateOf(false)
         private set
 
+    private val insightCache = mutableMapOf<String, String>()
+
     suspend fun prefetch() {
         val json = api.getJson("/v1/ui/bootstrap", token)
         val root = json?.let { runCatching { JSONObject(it) }.getOrNull() }
@@ -77,7 +79,29 @@ class UiSessionStore(
     }
 
     suspend fun invalidateAfterImport() {
+        insightCache.clear()
         prefetch()
+    }
+
+    /** Ledger insights are cached per date window so switching filters does not repeat the analytics call. */
+    suspend fun ledgerInsights(from: String?, to: String?): String? {
+        val key = "${from.orEmpty()}|${to.orEmpty()}"
+        insightCache[key]?.let { return it }
+        val query = buildString {
+            append("/v1/ledger/insights")
+            val params = buildList {
+                if (from != null) add("from=$from")
+                if (to != null) add("to=$to")
+            }
+            if (params.isNotEmpty()) append("?").append(params.joinToString("&"))
+        }
+        val json = api.getJson(query, token) ?: return null
+        insightCache[key] = json
+        return json
+    }
+
+    fun invalidateInsights() {
+        insightCache.clear()
     }
 
     fun clear() {
@@ -89,6 +113,7 @@ class UiSessionStore(
         missionDefinitionsJson = null
         mileSummaryJson = null
         mileEventsJson = null
+        insightCache.clear()
         liveReady = false
         decisionsReady = false
         missionsReady = false

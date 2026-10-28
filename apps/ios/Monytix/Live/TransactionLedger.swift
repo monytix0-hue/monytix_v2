@@ -47,6 +47,7 @@ struct TransactionLedger: View {
     var api: MonytixApi
     var token: (Bool) async -> String?
     var onBack: () -> Void
+    var store: UiSessionStore? = nil
 
     @Environment(\.personalTheme) private var theme
     @Environment(\.colorScheme) private var colorScheme
@@ -67,11 +68,16 @@ struct TransactionLedger: View {
     @State private var known = false
     @State private var loading = false
     @State private var loadingMore = false
+    @State private var insights: LedgerInsights = .empty
+    @State private var insightsLoading = false
+    @State private var insightsKnown = false
+    @State private var showSummary = true
 
     private var palette: PersonalPalette { colorScheme == .dark ? PersonalTokens.dark : PersonalTokens.light }
     private var creditColor: Color { theme.isDark ? PersonalTokens.status.mint : palette.accent }
     private var filtered: Bool { direction != nil || category != nil || from != nil || to != nil }
     private var filterKey: String { [direction ?? "", from ?? "", to ?? "", category ?? "", subcategory ?? ""].joined(separator: "|") }
+    private var insightsKey: String { [from ?? "", to ?? ""].joined(separator: "|") }
 
     var body: some View {
         ZStack {
@@ -81,6 +87,17 @@ struct TransactionLedger: View {
                 filters
                 ScrollView {
                     VStack(alignment: .leading, spacing: PersonalSpace.s16) {
+                        if showSummary && insightsKnown {
+                            MonthSummaryCarousel(months: insights.months, currency: insights.currency)
+                        }
+                        if showSummary && insightsKnown {
+                            SpendingChartCard(insights: insights) {
+                                showSummary = true
+                                direction = nil
+                                category = "none"
+                                subcategory = nil
+                            }
+                        }
                         if loading && items.isEmpty {
                             ProgressView().frame(maxWidth: .infinity)
                         } else if items.isEmpty {
@@ -112,6 +129,7 @@ struct TransactionLedger: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .task { await loadFilters() }
         .task(id: filterKey) { await reload() }
+        .task(id: insightsKey) { await loadInsights() }
         .sheet(isPresented: $showDates) { dateSheet }
     }
 
@@ -135,9 +153,52 @@ struct TransactionLedger: View {
 
     private var summary: some View {
         card {
-            Text("Recorded activity").personalText(.secondary, size: 13)
-            Text(summaryText).personalText(.primary, size: 16, weight: .bold)
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Recorded activity").personalText(.secondary, size: 13)
+                    Text(summaryText).personalText(.primary, size: 16, weight: .bold)
+                }
+                Spacer(minLength: PersonalSpace.s8)
+                Button {
+                    withAnimation(.easeOut(duration: 0.25)) { showSummary.toggle() }
+                } label: {
+                    Text(showSummary ? "Hide insights" : "Show insights")
+                        .font(.custom("Inter-SemiBold", size: 13))
+                        .foregroundStyle(palette.accent)
+                        .padding(.horizontal, PersonalSpace.s12)
+                        .padding(.vertical, PersonalSpace.s6)
+                        .background(palette.surfaceRaised, in: Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+            if insightsKnown && insights.uncategorised > 0 {
+                Button {
+                    reviewUncategorised()
+                } label: {
+                    HStack(spacing: PersonalSpace.s8) {
+                        Image(systemName: "exclamationmark.circle")
+                            .foregroundStyle(palette.textPrimary)
+                        Text("\(insights.uncategorised) not categorised — review this")
+                            .personalText(.primary, size: 13, weight: .bold)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            if insightsLoading && !insightsKnown {
+                ProgressView().frame(maxWidth: .infinity)
+            }
         }
+    }
+
+    private func reviewUncategorised() {
+        direction = nil
+        category = "none"
+        subcategory = nil
+        showSummary = true
     }
 
     private var summaryText: String {
@@ -152,11 +213,12 @@ struct TransactionLedger: View {
                 chip(dateLabel, on: from != nil) { showDates = true }
                 chip("Credit", on: direction == "IN") { toggleDirection("IN") }
                 chip("Debit", on: direction == "OUT") { toggleDirection("OUT") }
-                chip(categoryTitle, on: category != nil || categoriesOpen) { categoriesOpen.toggle() }
+                chip("Uncategorised", on: category == "none") { chooseCategory("none") }
+                chip(categoryTitle, on: (category != nil && category != "none") || categoriesOpen) { categoriesOpen.toggle() }
             }
             if categoriesOpen {
                 rail {
-                    ForEach(categories) { row in
+                    ForEach(categories.filter { $0.code != "none" }) { row in
                         chip(row.name, on: category == row.code) { chooseCategory(row.code) }
                     }
                 }
@@ -172,7 +234,8 @@ struct TransactionLedger: View {
     }
 
     private var categoryTitle: String {
-        categories.first { $0.code == category }?.name ?? "Category"
+        if category == "none" { return "Category" }
+        return categories.first { $0.code == category }?.name ?? "Category"
     }
 
     private var list: some View {
@@ -242,6 +305,14 @@ struct TransactionLedger: View {
                         .fixedSize(horizontal: false, vertical: true)
                     if let category = row.categoryName, !category.isEmpty {
                         Text(category).personalText(.secondary, size: 13).fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        HStack(spacing: 4) {
+                            Image(systemName: "exclamationmark.circle")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text("Needs a category — review")
+                                .font(.custom("Inter-SemiBold", size: 13))
+                        }
+                        .foregroundStyle(palette.accent)
                     }
                     if let account = row.accountName, !account.isEmpty {
                         Text(account).personalText(.secondary, size: 13).fixedSize(horizontal: false, vertical: true)
@@ -367,6 +438,10 @@ struct TransactionLedger: View {
         if let index = items.firstIndex(where: { $0.id == id }), let selected, selected.id == id {
             items[index] = selected
         }
+        if let store {
+            await MainActor.run { store.invalidateInsights() }
+        }
+        await loadInsights()
         return true
     }
 
@@ -415,6 +490,30 @@ struct TransactionLedger: View {
             }
             return TransactionCategory(code: code, name: name, subcategories: subs)
         }
+    }
+
+    private func loadInsights() async {
+        insightsLoading = true
+        defer { insightsLoading = false }
+        let data: Data?
+        if let store {
+            data = await store.ledgerInsights(from: from, to: to)
+        } else {
+            var query: [URLQueryItem] = []
+            if let from { query.append(URLQueryItem(name: "from", value: from)) }
+            if let to { query.append(URLQueryItem(name: "to", value: to)) }
+            var components = URLComponents()
+            components.queryItems = query.isEmpty ? nil : query
+            let suffix = components.percentEncodedQuery.map { "?\($0)" } ?? ""
+            data = await api.getJSON(path: "/v1/ledger/insights\(suffix)", token: token)
+        }
+        guard let data,
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            insightsKnown = false
+            return
+        }
+        insights = LedgerInsights.parse(root)
+        insightsKnown = true
     }
 
     private func path(cursor: String?) -> String {

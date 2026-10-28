@@ -19,6 +19,15 @@ const ledger: LedgerRead = {
   async overview() {
     return { from: null, to: null, currencies: [] };
   },
+  async insights() {
+    return {
+      uncategorised: 0,
+      currency: null,
+      totals: { credit: "0.00", debit: "0.00", categorisedOutflow: "0.00", uncategorisedOutflow: "0.00" },
+      monthlySummary: [],
+      spendingAnalysis: { categories: {} },
+    };
+  },
   async close() {},
 };
 

@@ -4,10 +4,15 @@ import android.app.Activity
 import android.content.Intent
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.auth.api.signin.GoogleSignInStatusCodes
+import com.google.android.gms.common.api.ApiException
+import com.google.android.gms.common.api.CommonStatusCodes
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseAuthInvalidUserException
 import com.google.firebase.auth.GoogleAuthProvider
 import com.monytix.app.MainActivity
 import com.monytix.app.R
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.tasks.await
 import kotlin.coroutines.resume
@@ -39,6 +44,7 @@ class FirebaseAuthSession : AuthSession {
             .requestEmail()
             .build()
         val client = GoogleSignIn.getClient(activity, options)
+        runCatching { client.signOut().await() }
         val data = suspendCancellableCoroutine<Intent?> { continuation ->
             host.onGoogleSignInResult = { intent ->
                 if (continuation.isActive) {
@@ -46,18 +52,37 @@ class FirebaseAuthSession : AuthSession {
                 }
             }
             continuation.invokeOnCancellation { host.onGoogleSignInResult = null }
-            host.startActivityForResult(client.signInIntent, MainActivity.GOOGLE_SIGN_IN)
+            host.googleSignIn.launch(client.signInIntent)
         }
-        val account = runCatching { GoogleSignIn.getSignedInAccountFromIntent(data).await() }.getOrNull()
-        val idToken = account?.idToken ?: return AuthResult.Failed("Google sign-in was cancelled.")
-        val credential = GoogleAuthProvider.getCredential(idToken, null)
-        return runAuth {
-            auth.signInWithCredential(credential).await()
+        return try {
+            val account = GoogleSignIn.getSignedInAccountFromIntent(data).await()
+            val idToken = account.idToken
+                ?: return AuthResult.Failed("Google sign-in did not return an account.")
+            val credential = GoogleAuthProvider.getCredential(idToken, null)
+            runAuth {
+                auth.signInWithCredential(credential).await()
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: ApiException) {
+            AuthResult.Failed(googleFailure(error.statusCode))
+        } catch (_: Exception) {
+            AuthResult.Failed("Google sign-in was cancelled.")
         }
     }
 
     override suspend fun idToken(forceRefresh: Boolean): String? {
-        return auth.currentUser?.getIdToken(forceRefresh)?.await()?.token
+        val user = auth.currentUser ?: return null
+        return try {
+            user.getIdToken(forceRefresh).await().token
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: FirebaseAuthInvalidUserException) {
+            signOut()
+            null
+        } catch (_: Exception) {
+            null
+        }
     }
 
     override suspend fun signOut() {
@@ -68,6 +93,16 @@ class FirebaseAuthSession : AuthSession {
             .build()
         runCatching { GoogleSignIn.getClient(app, options).signOut().await() }
         auth.signOut()
+    }
+
+    private fun googleFailure(status: Int): String {
+        return when (status) {
+            GoogleSignInStatusCodes.SIGN_IN_CANCELLED -> "Google sign-in was cancelled."
+            GoogleSignInStatusCodes.SIGN_IN_CURRENTLY_IN_PROGRESS -> "Google sign-in is already in progress."
+            CommonStatusCodes.DEVELOPER_ERROR -> "Google sign-in is not set up for this build."
+            CommonStatusCodes.NETWORK_ERROR -> "Google sign-in needs a network connection."
+            else -> "Google sign-in failed ($status)."
+        }
     }
 
     private suspend fun runAuth(block: suspend () -> Any?): AuthResult {

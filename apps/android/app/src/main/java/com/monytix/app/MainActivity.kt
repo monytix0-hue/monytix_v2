@@ -5,6 +5,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -26,13 +27,9 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     var onGoogleSignInResult: ((Intent?) -> Unit)? = null
 
-    @Deprecated("Deprecated in Java")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == GOOGLE_SIGN_IN) {
-            onGoogleSignInResult?.invoke(data)
-            onGoogleSignInResult = null
-        }
+    val googleSignIn = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        onGoogleSignInResult?.invoke(result.data)
+        onGoogleSignInResult = null
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -51,10 +48,6 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-
-    companion object {
-        const val GOOGLE_SIGN_IN = 9101
-    }
 }
 
 @Composable
@@ -67,6 +60,10 @@ private fun SessionGate() {
     LaunchedEffect(signedIn, store) {
         if (signedIn) {
             store.prefetch()
+            if (session.currentEmail() == null) {
+                store.clear()
+                signedIn = false
+            }
         } else {
             store.clear()
         }

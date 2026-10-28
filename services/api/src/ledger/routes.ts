@@ -126,6 +126,24 @@ export const ledgerRoutes: FastifyPluginAsync<LedgerRouteOptions> = async (app, 
     return { contract: "finance-overview-v0.1", ...overview };
   });
 
+  app.get("/v1/ledger/insights", async (request, reply) => {
+    if (!request.actorId) {
+      return reply.status(401).send({ error: "unauthorized" });
+    }
+    if (!request.ownerId || !ledger) {
+      return reply.status(403).send({ error: "owner_forbidden" });
+    }
+    const query = request.query as Record<string, unknown>;
+    const from = queryText(query.from);
+    const to = queryText(query.to);
+    const currency = queryText(query.currency);
+    if ((from && !dateText.test(from)) || (to && !dateText.test(to)) || (currency && !currencyText.test(currency))) {
+      return reply.status(422).send({ error: "invalid_request" });
+    }
+    const insights = await ledger.insights({ ownerId: request.ownerId, from, to, currency });
+    return { contract: "ledger-insights-v0.1", ...insights };
+  });
+
   app.post("/v1/molybot/ask", async (request, reply) => {
     if (!request.actorId) {
       return reply.status(401).send({ error: "unauthorized" });

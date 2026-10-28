@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.monytix.app.R
 import com.monytix.app.auth.MonytixApi
+import com.monytix.app.shell.UiSessionStore
 import com.monytix.app.theme.FigIcon
 import com.monytix.app.theme.LocalPersonalTheme
 import com.monytix.app.theme.PersonalRadius
@@ -79,6 +80,7 @@ fun TransactionScreen(
     api: MonytixApi,
     token: suspend (Boolean) -> String?,
     onBack: () -> Unit,
+    store: UiSessionStore? = null,
 ) {
     val theme = LocalPersonalTheme.current
     val scope = rememberCoroutineScope()
@@ -97,12 +99,26 @@ fun TransactionScreen(
     var known by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
     var loadingMore by remember { mutableStateOf(false) }
+    var insights by remember { mutableStateOf(LedgerInsights.empty) }
+    var insightsKnown by remember { mutableStateOf(false) }
+    var showInsights by remember { mutableStateOf(true) }
     val filtered = direction != null || category != null || from != null || to != null
     val query = listOf(direction, from, to, category, subcategory).joinToString("|")
+    val insightQuery = listOf(from, to).joinToString("|")
     val credit = if (theme.isDark) PersonalTokens.status.mint else theme.palette.accent
 
     LaunchedEffect(Unit) {
         categories = parseFilters(api.getJson("/v1/transaction-filters", token))
+    }
+    LaunchedEffect(insightQuery) {
+        val json = store?.ledgerInsights(from, to) ?: api.getJson(insightsPath(from, to), token)
+        val parsed = LedgerInsights.parse(json)
+        if (parsed != null) {
+            insights = parsed
+            insightsKnown = true
+        } else {
+            insightsKnown = false
+        }
     }
     LaunchedEffect(query) {
         loading = true
@@ -131,31 +147,85 @@ fun TransactionScreen(
         ) {
             LedgerBackBar("Transactions", "Recorded activity", onBack)
             LedgerCard {
-                Text("Recorded activity", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
-                Text(
-                    when {
-                        !known -> "Unavailable"
-                        items.isEmpty() && filtered -> "No transactions in this view"
-                        items.isEmpty() -> "No recorded transactions"
-                        else -> "Recorded"
-                    },
-                    color = theme.palette.textPrimary,
-                    fontFamily = theme.fontFamily,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("Recorded activity", color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+                        Text(
+                            when {
+                                !known -> "Unavailable"
+                                items.isEmpty() && filtered -> "No transactions in this view"
+                                items.isEmpty() -> "No recorded transactions"
+                                else -> "Recorded"
+                            },
+                            color = theme.palette.textPrimary,
+                            fontFamily = theme.fontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp,
+                        )
+                    }
+                    Text(
+                        if (showInsights) "Hide insights" else "Show insights",
+                        color = theme.palette.accent,
+                        fontFamily = theme.fontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 13.sp,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(PersonalRadius.pill))
+                            .background(theme.palette.surfaceRaised)
+                            .clickable { showInsights = !showInsights }
+                            .padding(horizontal = PersonalSpace.s12, vertical = PersonalSpace.s6),
+                    )
+                }
+                if (insightsKnown && insights.uncategorised > 0) {
+                    Text(
+                        "${insights.uncategorised} not categorised — review this",
+                        color = theme.palette.textPrimary,
+                        fontFamily = theme.fontFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(PersonalRadius.action))
+                            .clickable {
+                                direction = null
+                                category = "none"
+                                subcategory = null
+                                showInsights = true
+                            }
+                            .padding(vertical = PersonalSpace.s6),
+                    )
+                }
+            }
+            if (showInsights && insightsKnown) {
+                MonthSummaryCarousel(insights.months, insights.currency)
+                SpendingChartCard(insights) {
+                    direction = null
+                    category = "none"
+                    subcategory = null
+                    showInsights = true
+                }
             }
             FilterRail {
                 LedgerChip(dateLabel, from != null) { showDates = true }
                 LedgerChip("Credit", direction == "IN") { direction = if (direction == "IN") null else "IN" }
                 LedgerChip("Debit", direction == "OUT") { direction = if (direction == "OUT") null else "OUT" }
-                LedgerChip(categories.firstOrNull { it.code == category }?.name ?: "Category", category != null || categoriesOpen) {
+                LedgerChip("Uncategorised", category == "none") {
+                    if (category == "none") {
+                        category = null
+                    } else {
+                        category = "none"
+                    }
+                    subcategory = null
+                }
+                LedgerChip(
+                    categories.firstOrNull { it.code == category }?.name ?: "Category",
+                    (category != null && category != "none") || categoriesOpen,
+                ) {
                     categoriesOpen = !categoriesOpen
                 }
             }
             if (categoriesOpen) {
                 FilterRail {
-                    categories.forEach { row ->
+                    categories.filter { it.code != "none" }.forEach { row ->
                         LedgerChip(row.name, category == row.code) {
                             if (category == row.code) {
                                 category = null
@@ -212,6 +282,14 @@ fun TransactionScreen(
                                     )
                                     if (!row.categoryName.isNullOrBlank()) {
                                         Text(row.categoryName, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
+                                    } else {
+                                        Text(
+                                            "Needs a category — review",
+                                            color = theme.palette.accent,
+                                            fontFamily = theme.fontFamily,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 13.sp,
+                                        )
                                     }
                                     if (!row.accountName.isNullOrBlank()) {
                                         Text(row.accountName, color = theme.palette.textSecondary, fontFamily = theme.fontFamily, fontSize = 13.sp)
@@ -283,6 +361,12 @@ fun TransactionScreen(
                         items = page.items
                         nextCursor = page.nextCursor
                         known = page.known
+                        store?.invalidateInsights()
+                        val refreshed = store?.ledgerInsights(from, to) ?: api.getJson(insightsPath(from, to), token)
+                        LedgerInsights.parse(refreshed)?.let {
+                            insights = it
+                            insightsKnown = true
+                        }
                         val chosen = categories.firstOrNull { it.code == categoryCode }
                         val fresh = page.items.firstOrNull { it.id == row.id }
                         selected = fresh ?: row.copy(
@@ -630,6 +714,15 @@ private suspend fun saveCategory(
     val body = """{"category_id":"$categoryCode"$subcategory,"apply_to_past":false,"match_scope":"EXACT_MERCHANT"}"""
     val result = api.submit("PATCH", "/v1/transactions/$id/category", body, java.util.UUID.randomUUID().toString(), token)
     return result.status in 200..299
+}
+
+private fun insightsPath(from: String?, to: String?): String = buildString {
+    append("/v1/ledger/insights")
+    val params = buildList {
+        if (from != null) add("from=$from")
+        if (to != null) add("to=$to")
+    }
+    if (params.isNotEmpty()) append("?").append(params.joinToString("&"))
 }
 
 private suspend fun loadPage(

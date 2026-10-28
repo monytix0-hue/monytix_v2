@@ -20,6 +20,15 @@ function ledger(overrides: Partial<LedgerRead> = {}): LedgerRead {
     async overview() {
       return { from: "2026-10-01", to: "2026-10-31", currencies: [] };
     },
+    async insights() {
+      return {
+        uncategorised: 0,
+        currency: null,
+        totals: { credit: "0.00", debit: "0.00", categorisedOutflow: "0.00", uncategorisedOutflow: "0.00" },
+        monthlySummary: [],
+        spendingAnalysis: { categories: {} },
+      };
+    },
     async close() {},
     ...overrides,
   };

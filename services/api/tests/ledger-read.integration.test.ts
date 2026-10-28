@@ -233,6 +233,40 @@ test("ledger reads stay inside the authenticated owner", async (t) => {
     assert.equal(Number(overviewBody.currencies[0]!.ordinaryOutflow), 0);
     assert.equal(overviewBody.currencies[0]!.events.some((event) => event.family === "LOAN_REPAYMENT"), true);
 
+    const insights = await app.inject({
+      method: "GET",
+      url: "/v1/ledger/insights?from=2026-02-01&to=2026-02-28&currency=INR",
+      headers: headers(tokenA),
+    });
+    assert.equal(insights.statusCode, 200);
+    const insightsBody = insights.json() as {
+      contract: string;
+      uncategorised: number;
+      monthlySummary: Array<{ month: string; credit: string; debit: string; openingBalance: string; closingBalance: string }>;
+      spendingAnalysis: { categories: Record<string, { name: string; totalAmount: string; subcategories: Record<string, string> }> };
+    };
+    assert.equal(insightsBody.contract, "ledger-insights-v0.1");
+    assert.deepEqual(insightsBody.monthlySummary.map((row) => row.month), ["2026-02"]);
+    assert.equal(Number(insightsBody.monthlySummary[0]!.debit), 90);
+    assert.equal(Number(insightsBody.monthlySummary[0]!.credit), 0);
+    // Closing balance comes from the observed snapshot; opening rolls back through the month's flows.
+    assert.equal(Number(insightsBody.monthlySummary[0]!.closingBalance), 15);
+    assert.equal(Number(insightsBody.monthlySummary[0]!.openingBalance), 105);
+    const pieTotal = Object.values(insightsBody.spendingAnalysis.categories).reduce((sum, row) => sum + Number(row.totalAmount), 0);
+    assert.equal(pieTotal, Number(insightsBody.monthlySummary[0]!.debit));
+    assert.equal(Number(insightsBody.spendingAnalysis.categories.FINANCIAL_SERVICES?.subcategories.LOAN_EMI), 50);
+    assert.equal(Number(insightsBody.spendingAnalysis.categories.none?.totalAmount), 40);
+    assert.equal(insightsBody.uncategorised > 0, true);
+
+    const usdInsights = await app.inject({
+      method: "GET",
+      url: "/v1/ledger/insights?from=2026-02-01&to=2026-02-28&currency=USD",
+      headers: headers(tokenA),
+    });
+    const usdBody = usdInsights.json() as { monthlySummary: Array<{ debit: string }>; spendingAnalysis: { categories: Record<string, { totalAmount: string }> } };
+    assert.equal(Number(usdBody.monthlySummary[0]!.debit), 7);
+    assert.equal(Number(usdBody.spendingAnalysis.categories.none?.totalAmount), 7);
+
     const food = await app.inject({
       method: "GET",
       url: "/v1/transactions?category=FOOD_DINING",

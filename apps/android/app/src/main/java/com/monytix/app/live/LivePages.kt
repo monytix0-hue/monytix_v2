@@ -71,7 +71,7 @@ fun LiveDetail(
         if (json.isNullOrBlank()) LiveSnapshot.unavailable() else LiveSnapshot.parse(json)
     }
     if (page == LivePage.Transactions) {
-        TransactionScreen(api, token, onBack)
+        TransactionScreen(api, token, onBack, store)
         return
     }
     val theme = LocalPersonalTheme.current

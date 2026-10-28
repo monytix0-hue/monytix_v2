@@ -6,6 +6,7 @@ export type LedgerRead = {
   transactionFilters(ownerId: string): Promise<TransactionFilters>;
   accountSummaries(ownerId: string): Promise<AccountSummary[]>;
   overview(input: OverviewInput): Promise<Overview>;
+  insights(input: InsightsInput): Promise<Insights>;
   close(): Promise<void>;
 };
 
@@ -118,6 +119,39 @@ export type Overview = {
     transactionsWithoutEvent: number;
     transactionsWithoutUse: number;
   }>;
+};
+
+export type InsightsInput = {
+  ownerId: string;
+  from: string | null;
+  to: string | null;
+  currency: string | null;
+};
+
+export type Insights = {
+  uncategorised: number;
+  currency: string | null;
+  totals: {
+    credit: string;
+    debit: string;
+    categorisedOutflow: string;
+    uncategorisedOutflow: string;
+  };
+  monthlySummary: Array<{
+    month: string;
+    credit: string;
+    debit: string;
+    openingBalance: string;
+    closingBalance: string;
+  }>;
+  spendingAnalysis: {
+    categories: Record<string, {
+      name: string;
+      totalAmount: string;
+      subcategories: Record<string, string>;
+      subcategoryNames: Record<string, string>;
+    }>;
+  };
 };
 
 type Row = {
@@ -297,7 +331,7 @@ LEFT JOIN core.financial_account fa ON fa.financial_account_id = cv.financial_ac
 LEFT JOIN core.movement_weight mw ON mw.logical_transaction_id = cv.logical_transaction_id
 LEFT JOIN human_context.weight_master wm ON wm.code = mw.primary_weight_code
 LEFT JOIN ref.taxonomy_category cat
-  ON cat.taxonomy_version = 'F10E-v1.2' AND cat.category_code = cv.chosen_category
+   ON cat.taxonomy_version = 'F10E-v1.2' AND cat.category_code = cv.chosen_category
 LEFT JOIN ref.taxonomy_subcategory sub
   ON sub.taxonomy_version = 'F10E-v1.2' AND sub.subcategory_code = cv.chosen_subcategory
 ORDER BY cv.transaction_date DESC, cv.logical_transaction_id DESC
@@ -669,6 +703,206 @@ export function createLedgerRead(databaseUrl: string): LedgerRead {
             transactionsWithoutEvent: total.without_event,
             transactionsWithoutUse: total.without_use,
           })),
+        };
+      });
+    },
+
+    async insights(input) {
+      return withOwner(input.ownerId, async (client) => {
+        // Amounts are never mixed across currencies. When a caller omits the currency we
+        // resolve the dominant recorded currency so the summary and the pie chart always agree.
+        let currency = input.currency;
+        if (!currency) {
+          const dominant = await client.query<{ currency_code: string | null }>(
+            `SELECT cv.currency_code
+               FROM core.canonical_transaction_version cv
+               JOIN core.logical_transaction lt ON lt.logical_transaction_id = cv.logical_transaction_id
+              WHERE cv.is_current
+                AND lt.identity_status = 'ACTIVE'
+                AND cv.duplicate_outcome <> 'EQUIVALENT_SUPERSEDED'
+                AND cv.amount IS NOT NULL
+                AND cv.currency_code IS NOT NULL
+                AND ($1::date IS NULL OR cv.transaction_date >= $1)
+                AND ($2::date IS NULL OR cv.transaction_date <= $2)
+              GROUP BY cv.currency_code
+              ORDER BY count(*) DESC, cv.currency_code
+              LIMIT 1`,
+            [input.from, input.to],
+          );
+          currency = dominant.rows[0]?.currency_code?.trim() ?? null;
+        }
+
+        // 1. Uncategorised count
+        const uncategorisedRows = await client.query<{ count: string }>(
+          `SELECT count(*)::text
+             FROM core.canonical_transaction_version cv
+             JOIN core.logical_transaction lt ON lt.logical_transaction_id = cv.logical_transaction_id
+             ${categoryLaterals}
+             WHERE cv.is_current
+               AND lt.identity_status = 'ACTIVE'
+               AND cv.duplicate_outcome <> 'EQUIVALENT_SUPERSEDED'
+               AND COALESCE(choice.category_code, resolved.category_code) IS NULL
+               AND ($1::date IS NULL OR cv.transaction_date >= $1)
+               AND ($2::date IS NULL OR cv.transaction_date <= $2)
+               AND ($3::text IS NULL OR cv.currency_code = $3)`,
+          [input.from, input.to, currency],
+        );
+        const uncategorised = parseInt(uncategorisedRows.rows[0]?.count ?? "0", 10);
+
+        // 2. Monthly Summary
+        const monthlyRows = await client.query<{
+          month: string;
+          credit: string;
+          debit: string;
+          balance: string | null;
+        }>(
+          `WITH monthly_totals AS (
+             SELECT
+               date_trunc('month', cv.transaction_date)::date AS month,
+               COALESCE(sum(cv.amount) FILTER (WHERE cv.direction = 'IN'), 0)::text AS credit,
+               COALESCE(sum(cv.amount) FILTER (WHERE cv.direction = 'OUT'), 0)::text AS debit
+             FROM core.canonical_transaction_version cv
+             JOIN core.logical_transaction lt ON lt.logical_transaction_id = cv.logical_transaction_id
+             WHERE cv.is_current
+               AND lt.identity_status = 'ACTIVE'
+               AND cv.duplicate_outcome <> 'EQUIVALENT_SUPERSEDED'
+               AND cv.amount IS NOT NULL
+               AND ($1::date IS NULL OR cv.transaction_date >= $1)
+               AND ($2::date IS NULL OR cv.transaction_date <= $2)
+               AND ($3::text IS NULL OR cv.currency_code = $3)
+             GROUP BY 1
+           ),
+           balances AS (
+             SELECT month, sum(balance)::text AS balance
+             FROM (
+               SELECT DISTINCT ON (financial_account_id, date_trunc('month', observed_at))
+                 date_trunc('month', observed_at)::date AS month,
+                 balance_amount AS balance
+               FROM core.balance_snapshot
+               WHERE balance_type = 'AVAILABLE'
+                 AND ($3::text IS NULL OR currency_code = $3)
+               ORDER BY financial_account_id, date_trunc('month', observed_at), observed_at DESC
+             ) per_account
+             GROUP BY month
+           )
+           SELECT
+             to_char(mt.month, 'YYYY-MM') AS month,
+             mt.credit,
+             mt.debit,
+             b.balance
+           FROM monthly_totals mt
+           LEFT JOIN balances b ON b.month = mt.month
+           ORDER BY mt.month DESC`,
+          [input.from, input.to, currency],
+        );
+
+        const monthlySummary: Insights["monthlySummary"] = [];
+        let previousClosing: number | null = null;
+        for (const row of [...monthlyRows.rows].reverse()) {
+          const credit = Number(row.credit);
+          const debit = Number(row.debit);
+          // Prefer an observed snapshot for the closing balance; otherwise roll forward from the
+          // previous month. Opening is the prior closing when known, else derived from the closing.
+          const closing: number = row.balance !== null ? Number(row.balance) : (previousClosing ?? 0) + credit - debit;
+          const opening: number = previousClosing !== null ? previousClosing : closing - credit + debit;
+          monthlySummary.push({
+            month: row.month,
+            credit: credit.toFixed(2),
+            debit: debit.toFixed(2),
+            openingBalance: opening.toFixed(2),
+            closingBalance: closing.toFixed(2),
+          });
+          previousClosing = closing;
+        }
+        monthlySummary.reverse();
+
+        // 3. Spending Analysis (outflow only, bucket for uncategorised spend)
+        const spendingRows = await client.query<{
+          category_code: string | null;
+          category_name: string | null;
+          subcategory_code: string | null;
+          subcategory_name: string | null;
+          amount: string;
+        }>(
+          `SELECT
+               COALESCE(choice.category_code, resolved.category_code) AS category_code,
+               cat.display_name AS category_name,
+               COALESCE(choice.subcategory_code, resolved.subcategory_code) AS subcategory_code,
+               sub.display_name AS subcategory_name,
+               sum(cv.amount)::text AS amount
+             FROM core.canonical_transaction_version cv
+             JOIN core.logical_transaction lt ON lt.logical_transaction_id = cv.logical_transaction_id
+             ${categoryLaterals}
+             LEFT JOIN ref.taxonomy_category cat
+               ON cat.taxonomy_version = 'F10E-v1.2' AND cat.category_code = COALESCE(choice.category_code, resolved.category_code)
+             LEFT JOIN ref.taxonomy_subcategory sub
+               ON sub.taxonomy_version = 'F10E-v1.2' AND sub.subcategory_code = COALESCE(choice.subcategory_code, resolved.subcategory_code)
+             WHERE cv.is_current
+               AND lt.identity_status = 'ACTIVE'
+               AND cv.duplicate_outcome <> 'EQUIVALENT_SUPERSEDED'
+               AND cv.amount IS NOT NULL
+               AND cv.direction = 'OUT'
+               AND ($1::date IS NULL OR cv.transaction_date >= $1)
+               AND ($2::date IS NULL OR cv.transaction_date <= $2)
+               AND ($3::text IS NULL OR cv.currency_code = $3)
+             GROUP BY 1, 2, 3, 4
+             ORDER BY 5 DESC`,
+          [input.from, input.to, currency],
+        );
+
+        const spendingCategories: Insights["spendingAnalysis"]["categories"] = {};
+        for (const row of spendingRows.rows) {
+          const code = row.category_code ?? "none";
+          const name = row.category_code ? row.category_name ?? row.category_code : "Not recorded";
+          const current = spendingCategories[code] ?? {
+            name,
+            totalAmount: "0.00",
+            subcategories: {},
+            subcategoryNames: {},
+          };
+          current.totalAmount = (Number(current.totalAmount) + Number(row.amount)).toFixed(2);
+          if (row.subcategory_code) {
+            current.subcategories[row.subcategory_code] = (
+              Number(current.subcategories[row.subcategory_code] ?? "0") + Number(row.amount)
+            ).toFixed(2);
+            current.subcategoryNames[row.subcategory_code] =
+              row.subcategory_name ?? row.subcategory_code;
+          }
+          spendingCategories[code] = current;
+        }
+
+        const totalsRows = await client.query<{ credit: string; debit: string }>(
+          `SELECT
+             COALESCE(sum(cv.amount) FILTER (WHERE cv.direction = 'IN'), 0)::text AS credit,
+             COALESCE(sum(cv.amount) FILTER (WHERE cv.direction = 'OUT'), 0)::text AS debit
+           FROM core.canonical_transaction_version cv
+           JOIN core.logical_transaction lt ON lt.logical_transaction_id = cv.logical_transaction_id
+          WHERE cv.is_current
+            AND lt.identity_status = 'ACTIVE'
+            AND cv.duplicate_outcome <> 'EQUIVALENT_SUPERSEDED'
+            AND cv.amount IS NOT NULL
+            AND ($1::date IS NULL OR cv.transaction_date >= $1)
+            AND ($2::date IS NULL OR cv.transaction_date <= $2)
+            AND ($3::text IS NULL OR cv.currency_code = $3)`,
+          [input.from, input.to, currency],
+        );
+        const debitTotal = Number(totalsRows.rows[0]?.debit ?? 0);
+        const uncategorisedOutflow = Number(spendingCategories.none?.totalAmount ?? 0);
+        const categorisedOutflow = Number((debitTotal - uncategorisedOutflow).toFixed(2));
+
+        return {
+          uncategorised,
+          currency,
+          totals: {
+            credit: Number(totalsRows.rows[0]?.credit ?? 0).toFixed(2),
+            debit: debitTotal.toFixed(2),
+            categorisedOutflow: categorisedOutflow.toFixed(2),
+            uncategorisedOutflow: uncategorisedOutflow.toFixed(2),
+          },
+          monthlySummary,
+          spendingAnalysis: {
+            categories: spendingCategories,
+          },
         };
       });
     },

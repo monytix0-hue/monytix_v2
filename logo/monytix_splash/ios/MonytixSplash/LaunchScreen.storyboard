@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  LaunchScreen.storyboard
+  Monytix — Static launch screen shown by iOS before the app is ready.
+  Uses Night Sky background + centred O-mark image asset.
+
+  Add to your Xcode project:
+    1. Drag this file into your project (copy if needed)
+    2. In Target → General → App Icons and Launch Screen → Launch Screen File
+       select "LaunchScreen"
+    3. Make sure "ic_monytix_omark" exists in your Assets.xcassets
+
+  This shows for ~300–500ms before iOS hands control to your SwiftUI App,
+  at which point MonytixSplashView takes over with the animated sequence.
+-->
+<document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB"
+    version="3.0"
+    toolsVersion="21701"
+    targetRuntime="AppleCocoa"
+    propertyAccessControl="none"
+    useAutolayout="YES"
+    launchScreen="YES"
+    useTraitCollections="YES"
+    useSafeAreas="YES"
+    colorMatched="YES">
+  <device id="retina6_12" orientation="portrait" appearance="dark"/>
+  <dependencies>
+    <deployment identifier="iOS"/>
+    <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="21679"/>
+    <capability name="Safe area layout guide" minToolsVersion="9.0"/>
+    <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
+  </dependencies>
+  <scenes>
+    <scene sceneID="EHf-IW-A2E">
+      <objects>
+        <viewController id="01J-lp-oVM" sceneMemberID="viewController">
+          <view key="view" contentMode="scaleToFill" id="Ze5-6b-2t3">
+
+            <!-- Night Sky background -->
+            <rect key="frame" x="0.0" y="0.0" width="393" height="852"/>
+            <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
+            <subviews>
+
+              <!-- Centred O-mark icon -->
+              <imageView
+                  clipsSubviews="YES"
+                  userInteractionEnabled="NO"
+                  contentMode="scaleAspectFit"
+                  image="ic_monytix_omark"
+                  translatesAutoresizingMaskIntoConstraints="NO"
+                  id="Omark-center">
+                <rect key="frame" x="131.5" y="346" width="130" height="130"/>
+              </imageView>
+
+            </subviews>
+
+            <!-- Night Sky #0D1218 -->
+            <color key="backgroundColor" red="0.051" green="0.071" blue="0.094" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+
+            <constraints>
+              <!-- O-mark: 130×130, centred -->
+              <constraint firstItem="Omark-center" firstAttribute="width"      constant="130"  id="w1"/>
+              <constraint firstItem="Omark-center" firstAttribute="height"     constant="130"  id="h1"/>
+              <constraint firstItem="Omark-center" firstAttribute="centerX"    secondItem="Ze5-6b-2t3" secondAttribute="centerX" id="cx1"/>
+              <constraint firstItem="Omark-center" firstAttribute="centerY"    secondItem="Ze5-6b-2t3" secondAttribute="centerY" constant="-30" id="cy1"/>
+            </constraints>
+
+            <viewLayoutGuide key="safeAreaLayoutGuide" id="Bcu-3y-fUS"/>
+          </view>
+        </viewController>
+        <placeholder placeholderIdentifier="IBFirstResponder" id="iYj-Kq-Ea1" userLabel="First Responder" sceneMemberID="firstResponder"/>
+      </objects>
+      <point key="canvasLocation" x="53" y="375"/>
+    </scene>
+  </scenes>
+  <resources>
+    <image name="ic_monytix_omark" width="130" height="130"/>
+  </resources>
+</document>

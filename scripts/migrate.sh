@@ -107,6 +107,9 @@ for file in $(find /database/migrations -maxdepth 1 -type f -name '*.sql' | sort
     0061_fix_category_ownership.sql) code="CATEGORY-OWNERSHIP" ;;
     0062_residual_aliases.sql) code="RESIDUAL-ALIASES" ;;
     0063_residual_backfill.sql) code="RESIDUAL-BACKFILL" ;;
+    0064_restore_spot_id.sql) code="SPOT-ID-RESTORE" ;;
+    0065_gmail_watch_targets.sql) code="GMAIL-WATCH-TARGETS" ;;
+    0066_gmail_backlog_drain.sql) code="GMAIL-BACKLOG-DRAIN" ;;
     *) code="" ;;
   esac
 

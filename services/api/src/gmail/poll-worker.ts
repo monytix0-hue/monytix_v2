@@ -1,13 +1,15 @@
 import pg from "pg";
 import { redactGmailLog } from "./log.js";
-import { pollConnection, workerFailure, type PollConnection } from "./poll.js";
+import { pollConnection, refreshAccessToken, workerFailure, type PollConnection } from "./poll.js";
 import { unsealCredential } from "./secret.js";
+import { renewWatch } from "./watch.js";
 
 const databaseUrl = process.env.DATABASE_URL?.trim() ?? "";
 const clientId = process.env.GMAIL_CLIENT_ID?.trim() ?? "";
 const clientSecret = process.env.GMAIL_CLIENT_SECRET?.trim() ?? "";
 const tokenUri = process.env.GMAIL_TOKEN_URI?.trim() || "https://oauth2.googleapis.com/token";
 const encryptionKey = process.env.GMAIL_TOKEN_ENCRYPTION_KEY?.trim() ?? "";
+const pubsubTopic = process.env.GMAIL_PUBSUB_TOPIC?.trim() ?? "";
 const dryRun = process.env.GMAIL_DEBUG_DRY_RUN === "true";
 
 if (!databaseUrl || !clientId || !clientSecret || !encryptionKey) {
@@ -69,26 +71,41 @@ async function tick(url: string): Promise<void> {
       owner_currency: string | null;
       owner_country: string | null;
       owner_locale: string | null;
+      mailbox_address: string;
+      watch_expires_at: Date | null;
     }>("SELECT * FROM ops.list_gmail_poll_targets()");
     let stored = 0;
     let skipped = 0;
+    let watchesRenewed = 0;
     for (const row of listed.rows) {
       if (!row.actor_id) {
         continue;
       }
+      let refreshToken: string;
       try {
-        const connection: PollConnection = {
-          gmailConnectionId: row.gmail_connection_id,
-          ownerId: row.owner_id,
-          actorId: row.actor_id,
-          refreshToken: unsealCredential(row.credential_ciphertext, encryptionKey),
-          historyCheckpoint: row.history_checkpoint,
-          initialWindowDrained: row.initial_window_drained === true,
-          timezone: row.owner_timezone,
-          defaultCurrency: row.owner_currency,
-          country: row.owner_country,
-          locale: row.owner_locale,
-        };
+        refreshToken = unsealCredential(row.credential_ciphertext, encryptionKey);
+      } catch (error) {
+        logFailure("connection_failed", error);
+        continue;
+      }
+      const connection: PollConnection = {
+        gmailConnectionId: row.gmail_connection_id,
+        ownerId: row.owner_id,
+        actorId: row.actor_id,
+        refreshToken,
+        historyCheckpoint: row.history_checkpoint,
+        initialWindowDrained: row.initial_window_drained === true,
+        timezone: row.owner_timezone,
+        defaultCurrency: row.owner_currency,
+        country: row.owner_country,
+        locale: row.owner_locale,
+      };
+      // Renew before polling: a lapsed watch is why the next tick may never be
+      // triggered by push, so repairing it is what keeps the channel alive.
+      if (await renewOneWatch(connection, row.mailbox_address, row.watch_expires_at, client)) {
+        watchesRenewed += 1;
+      }
+      try {
         const counts = await pollOne(connection, row.gmail_connection_id, row.owner_id, client);
         stored += counts.stored;
         skipped += counts.skipped;
@@ -102,11 +119,74 @@ async function tick(url: string): Promise<void> {
       mailboxes: listed.rows.length,
       stored,
       skipped,
+      watchesRenewed,
       dryRun,
     }));
   } finally {
     await client.end();
   }
+}
+
+/**
+ * Renew this connection's Gmail watch when it is missing or close to lapsing.
+ * Returns true when a new watch was written. Errors are logged, never thrown: a
+ * watch failure must not stop the poll that follows it.
+ */
+async function renewOneWatch(
+  connection: PollConnection,
+  mailbox: string,
+  watchExpiresAt: Date | null,
+  client: pg.Client,
+): Promise<boolean> {
+  const fetchImpl = async (target: string, init?: RequestInit) => {
+    const response = await fetch(target, init);
+    return { status: response.status, json: () => response.json() as Promise<unknown> };
+  };
+  const outcome = await renewWatch(
+    {
+      gmailConnectionId: connection.gmailConnectionId,
+      ownerId: connection.ownerId,
+      refreshToken: connection.refreshToken,
+      watchExpiresAt,
+    },
+    {
+      fetchImpl,
+      topic: pubsubTopic,
+      project: process.env.GCP_PROJECT_ID?.trim() ?? "",
+      clientId,
+      clientSecret,
+      tokenUri,
+      // Reuse the poller's refresh rather than a second implementation of it. The
+      // remaining ports are unreachable on this path -- refreshAccessToken reads
+      // only clientId, clientSecret, tokenUri and fetchImpl.
+      accessToken: (refreshToken) =>
+        refreshAccessToken(refreshToken, {
+          fetchImpl,
+          clientId,
+          clientSecret,
+          tokenUri,
+          dryRun,
+          debug: () => {},
+          saveCandidate: async () => {},
+          saveDueDate: async () => {},
+          saveSpotTransaction: async () => "replay",
+          setCheckpoint: async () => {},
+          markWindowDrained: async () => {},
+        }),
+      saveWatch: async (input) => {
+        await client.query("SELECT ops.set_gmail_watch($1::uuid, $2, $3::timestamptz)", [
+          input.ownerId,
+          input.mailbox,
+          input.expiresAt,
+        ]);
+      },
+      mailbox,
+      log: (event) => {
+        console.log(JSON.stringify(redactGmailLog(event)));
+      },
+    },
+  );
+  return outcome.status === "renewed";
 }
 
 async function pollOne(
@@ -173,11 +253,21 @@ async function pollOne(
           spot.statedCurrency ?? null,
         ],
       );
+      const outcome = saved.rows[0]?.result?.outcome;
       const spotId = saved.rows[0]?.result?.gmail_spot_transaction_id;
+      // A save that reports success but hands back no id means the RPC lost the
+      // key the caller promotes on (0056 did exactly that). Fail loudly: the
+      // alternative is what happened for two days -- a healthy `stored` count and
+      // an empty ledger, with nothing in the log to say why.
+      if (!spotId && outcome !== "invalid") {
+        throw new Error(
+          `save_gmail_spot_transaction returned ${outcome ?? "nothing"} with no spot id; the alert cannot be promoted`,
+        );
+      }
       if (spotId) {
         await client.query("SELECT ops.promote_gmail_spot($1::uuid)", [spotId]);
       }
-      return saved.rows[0]?.result?.outcome === "created" ? "created" : "replay";
+      return outcome === "created" ? "created" : "replay";
     },
     setCheckpoint: async (checkpoint) => {
       await client.query("SELECT ops.set_gmail_history_checkpoint($1::uuid, $2)", [connectionId, checkpoint]);

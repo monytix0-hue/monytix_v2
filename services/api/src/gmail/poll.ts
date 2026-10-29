@@ -264,7 +264,7 @@ function logDryRun(event: Record<string, unknown>): void {
   console.log(JSON.stringify(event));
 }
 
-async function refreshAccessToken(refreshToken: string, ports: PollPorts): Promise<string> {
+export async function refreshAccessToken(refreshToken: string, ports: PollPorts): Promise<string> {
   const body = new URLSearchParams({
     grant_type: "refresh_token",
     refresh_token: refreshToken,

@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { FastifyPluginAsync } from "fastify";
 import { credentialPointer, type GmailConnectStore } from "./connect-store.js";
 import { sealCredential } from "./secret.js";
+import { qualifyTopic } from "./watch.js";
 
 const authorizeEndpoint = "https://accounts.google.com/o/oauth2/v2/auth";
 const defaultTokenUri = "https://oauth2.googleapis.com/token";
@@ -185,14 +186,21 @@ function readServerCode(body: unknown): string {
   return typeof code === "string" ? code.trim() : "";
 }
 
-export async function registerGmailWatch(input: { accessToken: string; topic: string }): Promise<{ expiresAt: string } | null> {
+export async function registerGmailWatch(input: { accessToken: string; topic: string; project?: string }): Promise<{ expiresAt: string } | null> {
+  // Gmail requires `projects/{id}/topics/{name}`. GMAIL_PUBSUB_TOPIC holds the bare
+  // topic id, so posting it verbatim is rejected -- which is why no connection in
+  // this deployment has ever carried a watch.
+  const topicName = qualifyTopic(input.topic, input.project ?? process.env.GCP_PROJECT_ID ?? "");
+  if (!topicName) {
+    return null;
+  }
   const response = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/watch", {
     method: "POST",
     headers: {
       authorization: `Bearer ${input.accessToken}`,
       "content-type": "application/json",
     },
-    body: JSON.stringify({ topicName: input.topic, labelIds: ["INBOX"] }),
+    body: JSON.stringify({ topicName, labelIds: ["INBOX"] }),
   });
   if (!response.ok) {
     return null;
@@ -213,18 +221,37 @@ async function rememberWatch(
   accessToken: string | undefined,
 ): Promise<void> {
   const topic = options.pubsubTopic?.trim() ?? "";
-  if (!topic || !accessToken || !options.store) {
+  if (!options.store) {
+    return;
+  }
+  // Silence here cost two days of undiagnosed ingestion. A connect that cannot
+  // watch is still a successful connect -- polling covers the gap -- but the
+  // reason has to reach the log, because the visible symptom (no push) is
+  // identical whether the topic is unset, the project is unset, or Google
+  // rejected the call.
+  if (!topic) {
+    logWatch("skipped", { reason: "no_topic", owner_id: ownerId });
+    return;
+  }
+  if (!accessToken) {
+    logWatch("skipped", { reason: "no_access_token", owner_id: ownerId });
     return;
   }
   try {
     const watched = await (options.watch ?? registerGmailWatch)({ accessToken, topic });
     if (!watched) {
+      logWatch("failed", { reason: "rejected", owner_id: ownerId });
       return;
     }
     await options.store.setWatch({ ownerId, mailbox, expiresAt: watched.expiresAt });
+    logWatch("registered", { owner_id: ownerId, expires_at: watched.expiresAt });
   } catch {
-    return;
+    logWatch("failed", { reason: "exception", owner_id: ownerId });
   }
+}
+
+function logWatch(event: string, fields: Record<string, unknown>): void {
+  console.log(JSON.stringify({ level: event === "failed" ? "warn" : "info", module: "gmail-connect", event: `watch_${event}`, ...fields }));
 }
 
 export async function exchangeGoogleCode(input: {
